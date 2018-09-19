@@ -46,27 +46,25 @@ import java.util.Set;
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
  */
 public abstract class OAbstractRecordReplicatedTask extends OAbstractReplicatedTask {
-  protected ORecordId         rid;
-  protected int               version;
-  protected int               partitionKey = -1;
-  protected boolean           lockRecords  = true;
+  protected ORecordId rid;
+  protected int       version;
+  protected int     partitionKey = -1;
+  protected boolean lockRecords  = true;
 
   protected transient ORecord previousRecord;
 
-  public OAbstractRecordReplicatedTask() {
+  public OAbstractRecordReplicatedTask init(final ORecord record) {
+    init((ORecordId) record.getIdentity(), record.getVersion());
+    return this;
   }
 
-  protected OAbstractRecordReplicatedTask(final ORecord record) {
-    this((ORecordId) record.getIdentity(), record.getVersion());
-  }
-
-  protected OAbstractRecordReplicatedTask(final ORecordId iRid, final int iVersion) {
+  public OAbstractRecordReplicatedTask init(final ORecordId iRid, final int iVersion) {
     this.rid = iRid;
     this.version = iVersion;
 
     final ODatabaseDocumentInternal db = ODatabaseRecordThreadLocal.INSTANCE.getIfDefined();
     if (db != null) {
-      final OClass clazz = db.getMetadata().getSchema().getClassByClusterId(rid.clusterId);
+      final OClass clazz = db.getMetadata().getSchema().getClassByClusterId(rid.getClusterId());
       if (clazz != null) {
         final Set<OIndex<?>> indexes = clazz.getIndexes();
         if (indexes != null && !indexes.isEmpty()) {
@@ -77,6 +75,7 @@ public abstract class OAbstractRecordReplicatedTask extends OAbstractReplicatedT
         }
       }
     }
+    return this;
   }
 
   public abstract Object executeRecordTask(ODistributedRequestId requestId, OServer iServer, ODistributedServerManager iManager,
@@ -114,7 +113,7 @@ public abstract class OAbstractRecordReplicatedTask extends OAbstractReplicatedT
 
   @Override
   public int[] getPartitionKey() {
-    return new int[] { partitionKey > -1 ? partitionKey : rid.clusterId };
+    return new int[] { partitionKey > -1 ? partitionKey : rid.getClusterId() };
   }
 
   @Override
@@ -131,7 +130,7 @@ public abstract class OAbstractRecordReplicatedTask extends OAbstractReplicatedT
   }
 
   public boolean checkForClusterAvailability(final String localNode, final ODistributedConfiguration cfg) {
-    final String clusterName = ODatabaseRecordThreadLocal.INSTANCE.get().getClusterNameById(rid.clusterId);
+    final String clusterName = ODatabaseRecordThreadLocal.INSTANCE.get().getClusterNameById(rid.getClusterId());
     return cfg.isServerContainingCluster(localNode, clusterName);
   }
 
@@ -139,7 +138,7 @@ public abstract class OAbstractRecordReplicatedTask extends OAbstractReplicatedT
     if (previousRecord == null) {
       // READ DIRECTLY FROM THE UNDERLYING STORAGE
       final OStorageOperationResult<ORawBuffer> loaded = ODatabaseRecordThreadLocal.INSTANCE.get().getStorage().getUnderlying()
-          .readRecord(rid, null, true, null);
+          .readRecord(rid, null, true, false, null);
 
       if (loaded == null || loaded.getResult() == null)
         return null;
@@ -181,10 +180,6 @@ public abstract class OAbstractRecordReplicatedTask extends OAbstractReplicatedT
 
   public void setLockRecords(final boolean lockRecords) {
     this.lockRecords = lockRecords;
-  }
-
-  public OLogSequenceNumber getLastLSN() {
-    return lastLSN;
   }
 
   public void setLastLSN(final OLogSequenceNumber lastLSN) {

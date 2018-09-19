@@ -50,6 +50,7 @@ import com.orientechnologies.orient.core.sql.functions.OSQLFunctionRuntime;
 import com.orientechnologies.orient.core.sql.operator.OQueryOperator;
 import com.orientechnologies.orient.core.sql.operator.OQueryOperatorEquals;
 import com.orientechnologies.orient.core.sql.operator.OQueryOperatorNotEquals;
+import com.orientechnologies.orient.core.sql.operator.OQueryOperatorNotEquals2;
 import com.orientechnologies.orient.core.sql.query.OResultSet;
 import com.orientechnologies.orient.core.sql.query.OSQLAsynchQuery;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
@@ -415,7 +416,7 @@ public abstract class OCommandExecutorSQLResultsetAbstract extends OCommandExecu
     assignLetClauses(iRecord);
     if (compiledFilter == null)
       return true;
-    return (Boolean) compiledFilter.evaluate(iRecord, null, iContext);
+    return Boolean.TRUE.equals(compiledFilter.evaluate(iRecord, null, iContext));
   }
 
   protected void assignLetClauses(final ORecord iRecord) {
@@ -471,7 +472,7 @@ public abstract class OCommandExecutorSQLResultsetAbstract extends OCommandExecu
       final boolean iAscendentOrder) {
 
     final ODatabaseDocumentInternal database = getDatabase();
-    database.checkSecurity(ORule.ResourceGeneric.CLASS, ORole.PERMISSION_READ, iCls.getName().toLowerCase());
+    database.checkSecurity(ORule.ResourceGeneric.CLASS, ORole.PERMISSION_READ, iCls.getName().toLowerCase(Locale.ENGLISH));
 
     final ORID[] range = getRange();
     if (iAscendentOrder)
@@ -494,7 +495,7 @@ public abstract class OCommandExecutorSQLResultsetAbstract extends OCommandExecu
       if (clusterName == null || clusterName.length() == 0)
         throw new OCommandExecutionException("No cluster or schema class selected in query");
 
-      database.checkSecurity(ORule.ResourceGeneric.CLUSTER, ORole.PERMISSION_READ, clusterName.toLowerCase());
+      database.checkSecurity(ORule.ResourceGeneric.CLUSTER, ORole.PERMISSION_READ, clusterName.toLowerCase(Locale.ENGLISH));
 
       if (Character.isDigit(clusterName.charAt(0))) {
         // GET THE CLUSTER NUMBER
@@ -506,7 +507,7 @@ public abstract class OCommandExecutorSQLResultsetAbstract extends OCommandExecu
         }
       } else {
         // GET THE CLUSTER NUMBER BY THE CLASS NAME
-        final int clusterId = database.getClusterIdByName(clusterName.toLowerCase());
+        final int clusterId = database.getClusterIdByName(clusterName.toLowerCase(Locale.ENGLISH));
         if (clusterId == -1)
           throw new OCommandExecutionException("Cluster '" + clusterName + "' not found");
 
@@ -616,7 +617,7 @@ public abstract class OCommandExecutorSQLResultsetAbstract extends OCommandExecu
       if (((OSQLFilterItemField) left).getRoot().equals(((OSQLFilterItemField) right).getRoot())) {
         if (oper instanceof OQueryOperatorEquals)
           result = Boolean.TRUE;
-        else if (oper instanceof OQueryOperatorNotEquals)
+        else if ((oper instanceof OQueryOperatorNotEquals) || (oper instanceof OQueryOperatorNotEquals2))
           result = Boolean.FALSE;
       }
     }

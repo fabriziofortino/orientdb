@@ -6,14 +6,14 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 public class OrientDataSourceTest extends OrientJdbcBaseTest {
 
@@ -21,11 +21,17 @@ public class OrientDataSourceTest extends OrientJdbcBaseTest {
   public void shouldConnect() throws SQLException {
 
     OrientDataSource ds = new OrientDataSource();
-    ds.setUrl("jdbc:orient:memory:test");
+    ds.setUrl("jdbc:orient:memory:OrientDataSourceTest");
     ds.setUsername("admin");
     ds.setPassword("admin");
 
     Connection conn = ds.getConnection();
+
+    assertThat(conn).isNotNull();
+    conn.close();
+    assertThat(conn.isClosed()).isTrue();
+
+    conn = ds.getConnection();
 
     assertThat(conn).isNotNull();
     conn.close();
@@ -42,7 +48,7 @@ public class OrientDataSourceTest extends OrientJdbcBaseTest {
     info.setProperty("db.pool.max", "10");
 
     final OrientDataSource ds = new OrientDataSource();
-    ds.setUrl("jdbc:orient:memory:test");
+    ds.setUrl("jdbc:orient:memory:OrientDataSourceTest");
     ds.setUsername("admin");
     ds.setPassword("admin");
     ds.setInfo(info);
@@ -75,7 +81,7 @@ public class OrientDataSourceTest extends OrientJdbcBaseTest {
     info.setProperty("db.pool.max", "10");
 
     final OrientDataSource ds = new OrientDataSource();
-    ds.setUrl("jdbc:orient:memory:test");
+    ds.setUrl("jdbc:orient:memory:OrientDataSourceTest");
     ds.setUsername("admin");
     ds.setPassword("admin");
     ds.setInfo(info);
@@ -87,20 +93,27 @@ public class OrientDataSourceTest extends OrientJdbcBaseTest {
 
         while (queryTheDb.get()) {
 
-          Connection conn = ds.getConnection();
+          try {
 
-          Statement statement = conn.createStatement();
-          ResultSet rs = statement.executeQuery("SELECT stringKey, intKey, text, length, date FROM Item");
+            Connection conn = ds.getConnection();
 
-          assertThat(rs.first()).isTrue();
-          assertThat(rs.getString("stringKey")).isEqualTo("1");
+            Statement statement = conn.createStatement();
+            ResultSet rs = statement.executeQuery("SELECT stringKey, intKey, text, length, date FROM Item");
 
-          rs.close();
+            assertThat(rs.first()).isTrue();
+            assertThat(rs.getString("stringKey")).isEqualTo("1");
 
-          statement.close();
-          conn.close();
-          assertThat(conn.isClosed()).isTrue();
+            rs.close();
 
+            statement.close();
+            conn.close();
+            assertThat(conn.isClosed()).isTrue();
+
+          } catch (Exception e) {
+            e.printStackTrace();
+            fail("fail:::", e);
+            return Boolean.FALSE;
+          }
         }
 
         return Boolean.TRUE;
@@ -109,17 +122,20 @@ public class OrientDataSourceTest extends OrientJdbcBaseTest {
 
     ExecutorService pool = Executors.newCachedThreadPool();
 
-    //activate 4 clients ≈
-    pool.submit(dbClient);
-    pool.submit(dbClient);
-    pool.submit(dbClient);
-    pool.submit(dbClient);
+    List<Future> futures = new ArrayList<Future>();
+    for (int i = 0; i < 20; i++) {
+      futures.add(pool.submit(dbClient));
+    }
 
     //and let them work
-    TimeUnit.SECONDS.sleep(2);
+    TimeUnit.SECONDS.sleep(5);
 
     //stop clients
     queryTheDb.set(false);
+
+    for (Future future : futures) {
+      future.get();
+    }
 
     pool.shutdown();
 

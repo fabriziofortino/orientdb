@@ -39,7 +39,7 @@ import java.util.TimeZone;
 
 /**
  * Implementation v0 of comparator based on protocol v0.
- * 
+ *
  * @author Luca Garulli
  */
 public class OBinaryComparatorV0 implements OBinaryComparator {
@@ -449,7 +449,8 @@ public class OBinaryComparatorV0 implements OBinaryComparator {
         }
         case LONG:
         case DATETIME: {
-          final long value2 = OVarIntSerializer.readAsLong(fieldValue2);
+          long value2 = OVarIntSerializer.readAsLong(fieldValue2);
+          value2 = ORecordSerializerBinaryV0.convertDayToTimezone(ODateHelper.getDatabaseTimeZone(), TimeZone.getTimeZone("GMT"), value2);
           return value1 == value2;
         }
         case DATE: {
@@ -469,7 +470,35 @@ public class OBinaryComparatorV0 implements OBinaryComparator {
           return value1 == value2;
         }
         case STRING: {
+          final String value2AsString = ORecordSerializerBinaryV0.readString(fieldValue2);
 
+          if (OIOUtils.isLong(value2AsString)) {
+            final long value2 = Long.parseLong(value2AsString);
+            return value1 == value2;
+          }
+
+          final ODatabaseDocumentInternal db = ODatabaseRecordThreadLocal.INSTANCE.getIfDefined();
+          try {
+            final SimpleDateFormat dateFormat = db != null ? db.getStorage().getConfiguration().getDateFormatInstance()
+                : new SimpleDateFormat(OStorageConfiguration.DEFAULT_DATETIME_FORMAT);
+
+            final Date value2AsDate = dateFormat.parse(value2AsString);
+            long value2 = value2AsDate.getTime();
+            value2 = ORecordSerializerBinaryV0
+                .convertDayToTimezone(ODateHelper.getDatabaseTimeZone(), TimeZone.getTimeZone("GMT"), value2);
+            return value1 == value2;
+          } catch (ParseException e) {
+            try {
+              final SimpleDateFormat dateFormat = db != null ? db.getStorage().getConfiguration().getDateFormatInstance()
+                  : new SimpleDateFormat(OStorageConfiguration.DEFAULT_DATE_FORMAT);
+
+              final Date value2AsDate = dateFormat.parse(value2AsString);
+              final long value2 = value2AsDate.getTime();
+              return value1 == value2;
+            } catch (ParseException e1) {
+              return new Date(value1).toString().equals(value2AsString);
+            }
+          }
         }
         case DECIMAL: {
           final BigDecimal value2 = ODecimalSerializer.INSTANCE.deserialize(fieldValue2.bytes, fieldValue2.offset);
@@ -575,6 +604,7 @@ public class OBinaryComparatorV0 implements OBinaryComparator {
           final long clusterPos2 = OVarIntSerializer.readAsLong(fieldValue2);
           if (clusterPos1 == clusterPos2)
             return true;
+          break;
         }
         case STRING: {
           return ORecordSerializerBinaryV0.readOptimizedLink(fieldValue1).toString()
@@ -585,12 +615,12 @@ public class OBinaryComparatorV0 implements OBinaryComparator {
       }
 
       case DECIMAL: {
-        final BigDecimal value1 = ODecimalSerializer.INSTANCE.deserialize(fieldValue1.bytes, fieldValue1.offset);
+        BigDecimal value1 = ODecimalSerializer.INSTANCE.deserialize(fieldValue1.bytes, fieldValue1.offset);
 
         switch (iField2.type) {
         case INTEGER: {
           final int value2 = OVarIntSerializer.readAsInteger(fieldValue2);
-          return value1.equals(new BigDecimal(value2));
+          return value1.equals(new BigDecimal(value2).setScale(value1.scale()));
         }
         case LONG:
         case DATETIME: {
@@ -613,7 +643,10 @@ public class OBinaryComparatorV0 implements OBinaryComparator {
           return value1.toString().equals(ORecordSerializerBinaryV0.readString(fieldValue2));
         }
         case DECIMAL: {
-          final BigDecimal value2 = ODecimalSerializer.INSTANCE.deserialize(fieldValue2.bytes, fieldValue2.offset);
+          BigDecimal value2 = ODecimalSerializer.INSTANCE.deserialize(fieldValue2.bytes, fieldValue2.offset);
+          int maxScale = Math.max(value1.scale(), value2.scale());
+          value1 = value1.setScale(maxScale, BigDecimal.ROUND_DOWN);
+          value2 = value2.setScale(maxScale, BigDecimal.ROUND_DOWN);
           return value1.equals(value2);
         }
         }

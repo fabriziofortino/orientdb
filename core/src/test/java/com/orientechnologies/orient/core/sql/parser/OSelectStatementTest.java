@@ -687,13 +687,26 @@ public class OSelectStatementTest {
     checkRightSyntax("Select * From ACNodeAuthentication where acNodeID like \"%\" + ? + '%'");
   }
 
+  @Test
   public void testAppendParams(){
     checkRightSyntax("select from User where Account.Name like :name + '%'");
-
   }
 
+  @Test
   public void testLetMatch(){
     checkRightSyntax("select $a let $a = (MATCH {class:Foo, as:bar, where:(name = 'foo')} return $elements)");
+  }
+
+  @Test
+  public void testLetReserved(){
+    checkWrongSyntax("select from V let $root = (select from f)");
+    checkWrongSyntax("select from V let root = (select from f)");
+    checkWrongSyntax("select from V let $parent = (select from f)");
+    checkWrongSyntax("select from V let parent = (select from f)");
+    checkWrongSyntax("select from V let $current = (select from f)");
+    checkWrongSyntax("select from V let current = (select from f)");
+
+    checkRightSyntax("select from V let foo = (select from f)");
   }
 
   public void testLockRecord() {
@@ -707,6 +720,10 @@ public class OSelectStatementTest {
     checkRightSyntax("Select from foo LOCK DEFAULT");
 
     checkWrongSyntax("Select from foo LOCK Foo");
+  }
+
+  public void testFromAsInputParam() {
+    checkRightSyntax("Select from foo where foo = :from");
   }
 
 

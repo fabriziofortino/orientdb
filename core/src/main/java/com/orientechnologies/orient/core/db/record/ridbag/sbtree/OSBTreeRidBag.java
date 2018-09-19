@@ -27,6 +27,7 @@ import com.orientechnologies.common.serialization.types.OLongSerializer;
 import com.orientechnologies.common.types.OModifiableInteger;
 import com.orientechnologies.common.util.OResettable;
 import com.orientechnologies.common.util.OSizeable;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.record.*;
 import com.orientechnologies.orient.core.db.record.ridbag.ORidBagDelegate;
@@ -47,6 +48,7 @@ import com.orientechnologies.orient.core.storage.impl.local.paginated.ORidBagUpd
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.*;
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
@@ -650,7 +652,8 @@ public class OSBTreeRidBag implements ORidBagDelegate {
 
   public void add(final OIdentifiable identifiable) {
     if (identifiable == null)
-      throw new NullPointerException("Impossible to add a null identifiable in a ridbag");
+      throw new IllegalArgumentException("Impossible to add a null identifiable in a ridbag");
+
     if (identifiable.getIdentity().isValid()) {
       Change counter = changes.get(identifiable);
       if (counter == null)
@@ -870,6 +873,21 @@ public class OSBTreeRidBag implements ORidBagDelegate {
     if (context == null) {
       ChangeSerializationHelper.INSTANCE.serializeChanges(changes, OLinkSerializer.INSTANCE, stream, offset);
     } else {
+
+      ODatabaseDocumentInternal db = ODatabaseRecordThreadLocal.INSTANCE.getIfDefined();
+      for (Entry<OIdentifiable, Change> change : this.changes.entrySet()) {
+        OIdentifiable key = change.getKey();
+        if (db != null && db.getTransaction().isActive()) {
+          if (!key.getIdentity().isPersistent()) {
+            OIdentifiable newKey = db.getTransaction().getRecord(key.getIdentity());
+            if (newKey != null) {
+              changes.remove(key);
+              changes.put(newKey, change.getValue());
+            }
+          }
+        }
+      }
+      this.collectionPointer = collectionPointer;
       context.push(new ORidBagUpdateSerializationOperation(changes, collectionPointer));
 
       // 0-length serialized list of changes
@@ -1048,6 +1066,7 @@ public class OSBTreeRidBag implements ORidBagDelegate {
    * Removes entry with given key from {@link #newEntries}.
    *
    * @param identifiable key to remove
+   *
    * @return true if entry have been removed
    */
   private boolean removeFromNewEntries(final OIdentifiable identifiable) {

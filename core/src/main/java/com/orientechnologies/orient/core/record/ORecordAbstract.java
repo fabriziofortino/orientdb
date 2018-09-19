@@ -47,20 +47,20 @@ import java.util.WeakHashMap;
 
 @SuppressWarnings({ "unchecked", "serial" })
 public abstract class ORecordAbstract implements ORecord {
-  protected ORecordId                            _recordId;
-  protected int                                  _recordVersion             = 0;
+  protected ORecordId _recordId;
+  protected int _recordVersion = 0;
 
-  protected byte[]                               _source;
-  protected int                                  _size;
+  protected byte[] _source;
+  protected int    _size;
 
-  protected transient ORecordSerializer          _recordFormat;
-  protected boolean                              _dirty                     = true;
-  protected boolean                              _contentChanged            = true;
-  protected ORecordElement.STATUS                _status                    = ORecordElement.STATUS.LOADED;
-  protected transient Set<ORecordListener>       _listeners                 = null;
+  protected transient ORecordSerializer _recordFormat;
+  protected           boolean               _dirty          = true;
+  protected           boolean               _contentChanged = true;
+  protected           ORecordElement.STATUS _status         = ORecordElement.STATUS.LOADED;
+  protected transient Set<ORecordListener>  _listeners      = null;
 
   private transient Set<OIdentityChangeListener> newIdentityChangeListeners = null;
-  protected ODirtyManager                        _dirtyManager;
+  protected ODirtyManager _dirtyManager;
 
   public ORecordAbstract() {
   }
@@ -77,6 +77,7 @@ public abstract class ORecordAbstract implements ORecord {
 
   protected ORecordAbstract setIdentity(final ORecordId iIdentity) {
     _recordId = iIdentity;
+    getDirtyManager().setDirty(this);
     return this;
   }
 
@@ -161,7 +162,7 @@ public abstract class ORecordAbstract implements ORecord {
   public <RET extends ORecord> RET fromJSON(final String iSource, final String iOptions) {
     // ORecordSerializerJSON.INSTANCE.fromString(iSource, this, null, iOptions);
     ORecordSerializerJSON.INSTANCE.fromString(iSource, this, null, iOptions, false); // Add new parameter to accommodate new API,
-                                                                                     // nothing change
+    // nothing change
     return (RET) this;
   }
 
@@ -224,16 +225,12 @@ public abstract class ORecordAbstract implements ORecord {
     if (!getIdentity().isValid())
       throw new ORecordNotFoundException(getIdentity(), "The record has no id, probably it's new or transient yet ");
 
-    try {
-      final ORecord result = getDatabase().load(this);
+    final ORecord result = getDatabase().load(this);
 
-      if (result == null)
-        throw new ORecordNotFoundException(getIdentity());
+    if (result == null)
+      throw new ORecordNotFoundException(getIdentity());
 
-      return result;
-    } catch (Exception e) {
-      throw OException.wrapException(new ORecordNotFoundException(getIdentity()), e);
-    }
+    return result;
   }
 
   public ODatabaseDocumentInternal getDatabase() {
@@ -294,7 +291,6 @@ public abstract class ORecordAbstract implements ORecord {
 
   public ORecordAbstract delete() {
     getDatabase().delete(this);
-    setDirty();
     return this;
   }
 
@@ -304,8 +300,8 @@ public abstract class ORecordAbstract implements ORecord {
 
   @Override
   public void lock(final boolean iExclusive) {
-    ODatabaseRecordThreadLocal.INSTANCE.get().getTransaction().lockRecord(this,
-        iExclusive ? OStorage.LOCKING_STRATEGY.EXCLUSIVE_LOCK : OStorage.LOCKING_STRATEGY.SHARED_LOCK);
+    ODatabaseRecordThreadLocal.INSTANCE.get().getTransaction()
+        .lockRecord(this, iExclusive ? OStorage.LOCKING_STRATEGY.EXCLUSIVE_LOCK : OStorage.LOCKING_STRATEGY.SHARED_LOCK);
   }
 
   @Override
@@ -380,8 +376,8 @@ public abstract class ORecordAbstract implements ORecord {
   }
 
   protected ORecordAbstract fill(final ORID iRid, final int iVersion, final byte[] iBuffer, boolean iDirty) {
-    _recordId.clusterId = iRid.getClusterId();
-    _recordId.clusterPosition = iRid.getClusterPosition();
+    _recordId.setClusterId(iRid.getClusterId());
+    _recordId.setClusterPosition(iRid.getClusterPosition());
     _recordVersion = iVersion;
     _status = ORecordElement.STATUS.LOADED;
     _source = iBuffer;
@@ -400,8 +396,8 @@ public abstract class ORecordAbstract implements ORecord {
     if (_recordId == null || _recordId == ORecordId.EMPTY_RECORD_ID)
       _recordId = new ORecordId(iClusterId, iClusterPosition);
     else {
-      _recordId.clusterId = iClusterId;
-      _recordId.clusterPosition = iClusterPosition;
+      _recordId.setClusterId(iClusterId);
+      _recordId.setClusterPosition(iClusterPosition);
     }
     return this;
   }
@@ -442,10 +438,10 @@ public abstract class ORecordAbstract implements ORecord {
 
   /**
    * Add a listener to the current document to catch all the supported events.
-   * 
+   *
+   * @param iListener ODocumentListener implementation
+   *
    * @see ORecordListener ju
-   * @param iListener
-   *          ODocumentListener implementation
    */
   protected void addListener(final ORecordListener iListener) {
     if (_listeners == null)
@@ -456,7 +452,7 @@ public abstract class ORecordAbstract implements ORecord {
 
   /**
    * Remove the current event listener.
-   * 
+   *
    * @see ORecordListener
    */
   protected void removeListener(final ORecordListener listener) {

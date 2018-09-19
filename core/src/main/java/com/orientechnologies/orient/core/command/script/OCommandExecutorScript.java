@@ -40,6 +40,7 @@ import com.orientechnologies.orient.core.serialization.serializer.OStringSeriali
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.sql.OCommandSQLParsingException;
 import com.orientechnologies.orient.core.sql.OSQLEngine;
+import com.orientechnologies.orient.core.sql.OTemporaryRidGenerator;
 import com.orientechnologies.orient.core.sql.filter.OSQLFilter;
 import com.orientechnologies.orient.core.sql.filter.OSQLPredicate;
 import com.orientechnologies.orient.core.sql.parser.OIfStatement;
@@ -53,6 +54,7 @@ import com.orientechnologies.orient.core.tx.OTransaction;
 import javax.script.*;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Executes Script Commands.
@@ -60,10 +62,11 @@ import java.util.*;
  * @author Luca Garulli
  * @see OCommandScript
  */
-public class OCommandExecutorScript extends OCommandExecutorAbstract implements OCommandDistributedReplicateRequest {
+public class OCommandExecutorScript extends OCommandExecutorAbstract implements OCommandDistributedReplicateRequest, OTemporaryRidGenerator {
   private static final int             MAX_DELAY     = 100;
   protected OCommandScript             request;
   protected DISTRIBUTED_EXECUTION_MODE executionMode = DISTRIBUTED_EXECUTION_MODE.LOCAL;
+  protected AtomicInteger              serialTempRID = new AtomicInteger(0);
 
   public OCommandExecutorScript() {
   }
@@ -208,6 +211,7 @@ public class OCommandExecutorScript extends OCommandExecutorAbstract implements 
     int maxRetry = 1;
 
     context.setVariable("transactionRetries", 0);
+    context.setVariable("parentQuery", this);
 
     for (int retry = 1; retry <= maxRetry; retry++) {
       try {
@@ -290,7 +294,7 @@ public class OCommandExecutorScript extends OCommandExecutorAbstract implements 
                   String next = lastCommand.substring("begin ".length()).trim();
                   if (OStringSerializerHelper.startsWithIgnoreCase(next, "isolation ")) {
                     next = next.substring("isolation ".length()).trim();
-                    db.getTransaction().setIsolationLevel(OTransaction.ISOLATION_LEVEL.valueOf(next.toUpperCase()));
+                    db.getTransaction().setIsolationLevel(OTransaction.ISOLATION_LEVEL.valueOf(next.toUpperCase(Locale.ENGLISH)));
                   }
                 }
 
@@ -472,12 +476,16 @@ public class OCommandExecutorScript extends OCommandExecutorAbstract implements 
     try {
       Thread.sleep(new Random().nextInt(MAX_DELAY - 1) + 1);
     } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
       OLogManager.instance().error(this, "Wait was interrupted", e);
     }
   }
 
   private Object executeCommand(final String lastCommand, final ODatabaseDocument db) {
-    return db.command(new OCommandSQL(lastCommand).setContext(getContext())).execute(toMap(parameters));
+    final OCommandSQL command = new OCommandSQL(lastCommand);
+    Object result = db.command(command.setContext(getContext())).execute(toMap(parameters));
+    request.setFetchPlan(command.getFetchPlan());
+    return result;
   }
 
   private Object toMap(Object parameters) {
@@ -551,7 +559,7 @@ public class OCommandExecutorScript extends OCommandExecutorAbstract implements 
       lastResult = new OContextVariableResolver(context).parse(OIOUtils.getStringContent(iValue));
       checkIsRecordResultSet(lastResult);
     } else if (iValue.startsWith("(") && iValue.endsWith(")"))
-      lastResult = executeCommand(iValue, db);
+      lastResult = executeCommand(iValue.substring(1, iValue.length() - 1), db);
     else {
       lastResult = new OSQLPredicate(iValue).evaluate(context);
 
@@ -578,6 +586,7 @@ public class OCommandExecutorScript extends OCommandExecutorAbstract implements 
     try {
       Thread.sleep(Integer.parseInt(sleepTimeInMs));
     } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
       OLogManager.instance().debug(this, "Sleep was interrupted in SQL batch");
     }
   }
@@ -622,5 +631,10 @@ public class OCommandExecutorScript extends OCommandExecutorAbstract implements 
   @Override
   public QUORUM_TYPE getQuorumType() {
     return QUORUM_TYPE.WRITE;
+  }
+
+  @Override
+  public int getTemporaryRIDCounter(OCommandContext iContext) {
+    return serialTempRID.incrementAndGet();
   }
 }

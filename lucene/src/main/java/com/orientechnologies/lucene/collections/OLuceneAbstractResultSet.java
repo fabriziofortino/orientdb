@@ -21,8 +21,9 @@ package com.orientechnologies.lucene.collections;
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.lucene.engine.OLuceneIndexEngine;
 import com.orientechnologies.lucene.engine.OLuceneIndexEngineAbstract;
-import com.orientechnologies.lucene.query.QueryContext;
+import com.orientechnologies.lucene.query.OLuceneQueryContext;
 import com.orientechnologies.orient.core.command.OCommandContext;
+import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TopDocs;
@@ -36,105 +37,107 @@ import java.util.Set;
  */
 public abstract class OLuceneAbstractResultSet implements Set<OIdentifiable> {
 
-    protected static Integer PAGE_SIZE = 10000;
-    protected final String indexName;
-    protected TopDocs topDocs;
-    protected Query query;
-    protected OLuceneIndexEngine manager;
-    protected QueryContext queryContext;
+  protected  Integer pageSize = 10000;
+  protected final String              indexName;
+  protected final Query               query;
+  protected final OLuceneIndexEngine  engine;
+  protected final OLuceneQueryContext queryContext;
+  protected       TopDocs             topDocs;
 
-    public OLuceneAbstractResultSet(OLuceneIndexEngine manager, QueryContext queryContext) {
-        this.manager = manager;
-        this.queryContext = queryContext;
-        this.query = enhanceQuery(queryContext.query);
+  public OLuceneAbstractResultSet(OLuceneIndexEngine engine, OLuceneQueryContext queryContext) {
+    this.engine = engine;
+    this.queryContext = queryContext;
+    this.query = enhanceQuery(queryContext.query);
+    pageSize= OGlobalConfiguration.LUCENE_QUERY_PAGE_SIZE.getValue();
+    indexName = engine.indexName();
+    fetchFirstBatch();
+  }
 
-        indexName = manager.indexName();
-        fetchFirstBatch();
+  protected Query enhanceQuery(Query query) {
+    return query;
+  }
+
+  protected void fetchFirstBatch() {
+    try {
+
+      switch (queryContext.cfg) {
+
+      case NO_FILTER_NO_SORT:
+        topDocs = queryContext.getSearcher().search(query, pageSize);
+        break;
+      case FILTER_SORT:
+        topDocs = queryContext.getSearcher().search(query, queryContext.filter, pageSize, queryContext.sort);
+        break;
+      case FILTER:
+        topDocs = queryContext.getSearcher().search(query, queryContext.filter, pageSize);
+        break;
+      case SORT:
+        topDocs = queryContext.getSearcher().search(query, pageSize, queryContext.sort);
+        break;
+      }
+    } catch (IOException e) {
+      OLogManager.instance().error(this, "Error on fetching document by query '%s' to Lucene index", e, query);
     }
+  }
 
-    protected Query enhanceQuery(Query query) {
-        return query;
-    }
 
-    protected void fetchFirstBatch() {
-        try {
 
-            switch (queryContext.cfg) {
+  @Override
+  public boolean isEmpty() {
+    return size() == 0;
+  }
 
-                case NO_FILTER_NO_SORT:
-                    topDocs = queryContext.getSearcher().search(query, PAGE_SIZE);
-                    break;
-                case FILTER_SORT:
-                    topDocs = queryContext.getSearcher().search(query, queryContext.filter, PAGE_SIZE, queryContext.sort);
-                    break;
-                case FILTER:
-                    topDocs = queryContext.getSearcher().search(query, queryContext.filter, PAGE_SIZE);
-                    break;
-                case SORT:
-                    topDocs = queryContext.getSearcher().search(query, PAGE_SIZE, queryContext.sort);
-                    break;
-            }
-        } catch (IOException e) {
-            OLogManager.instance().error(this, "Error on fetching document by query '%s' to Lucene index", e, query);
-        }
-    }
+  @Override
+  public boolean contains(Object o) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean isEmpty() {
-        return size() == 0;
-    }
+  @Override
+  public Object[] toArray() {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean contains(Object o) {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public <T> T[] toArray(T[] a) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public <T> T[] toArray(T[] a) {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public boolean add(OIdentifiable oIdentifiable) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public Object[] toArray() {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public boolean remove(Object o) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean add(OIdentifiable oIdentifiable) {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public boolean containsAll(Collection<?> c) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean remove(Object o) {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public boolean addAll(Collection<? extends OIdentifiable> c) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean containsAll(Collection<?> c) {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public boolean retainAll(Collection<?> c) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean addAll(Collection<? extends OIdentifiable> c) {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public boolean removeAll(Collection<?> c) {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean retainAll(Collection<?> c) {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void clear() {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean removeAll(Collection<?> c) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void clear() {
-        throw new UnsupportedOperationException();
-    }
-
-    public void sendLookupTime(OCommandContext commandContext, long start) {
-        OLuceneIndexEngineAbstract.sendLookupTime(indexName, commandContext, topDocs, -1, start);
-    }
+  public void sendLookupTime(OCommandContext commandContext, long start) {
+    OLuceneIndexEngineAbstract.sendLookupTime(indexName, commandContext, topDocs, -1, start);
+  }
 }

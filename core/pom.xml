@@ -19,7 +19,7 @@
     <parent>
         <groupId>com.orientechnologies</groupId>
         <artifactId>orientdb-parent</artifactId>
-        <version>2.2.8</version>
+        <version>2.2.24</version>
         <relativePath>../</relativePath>
     </parent>
 
@@ -38,6 +38,7 @@
             com.orientechnologies.orient.client.remote;resolution:=optional,
             com.sun.jna;resolution:=optional,
             org.xerial.snappy;resolution:=optional,
+            sun.nio.ch;resolution:=optional,
             *
         </osgi.import>
         <osgi.export>com.orientechnologies.orient.core.*,
@@ -59,6 +60,7 @@
             -Dsecurity.userPasswordSaltIterations=10
             -Dmemory.directMemory.trackMode=true
             -Djava.util.logging.manager=com.orientechnologies.common.log.OLogManager$DebugLogManager
+            -Dstorage.diskCache.checksumMode=storeAndThrow
         </argLine>
     </properties>
 
@@ -80,6 +82,7 @@
                 <exclude.test.9>**/SBTreeWALTest.java</exclude.test.9>
                 <exclude.test.10>**/LocalPaginatedClusterWithWALTest.java</exclude.test.10>
                 <exclude.test.11>**/OSBTreeBonsaiWALTest.java</exclude.test.11>
+                <exclude.test.12>**/InvalidRemovedFileIdsTest.java</exclude.test.12>
             </properties>
         </profile>
 
@@ -103,6 +106,7 @@
                 <exclude.test.9>empty.java</exclude.test.9>
                 <exclude.test.10>empty.java</exclude.test.10>
                 <exclude.test.11>empty.java</exclude.test.11>
+                <exclude.test.12>empty.java</exclude.test.12>
             </properties>
 
         </profile>
@@ -126,6 +130,7 @@
                 <exclude.test.9>empty.java</exclude.test.9>
                 <exclude.test.10>empty.java</exclude.test.10>
                 <exclude.test.11>empty.java</exclude.test.11>
+                <exclude.test.12>empty.java</exclude.test.12>
             </properties>
 
         </profile>
@@ -147,6 +152,20 @@
 
     <build>
         <plugins>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>templating-maven-plugin</artifactId>
+                <version>1.0.0</version>
+                <executions>
+                    <execution>
+                        <id>generate-verion-class</id>
+                        <goals>
+                            <goal>filter-sources</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>javacc-maven-plugin</artifactId>
@@ -185,6 +204,7 @@
                         <exclude>${exclude.test.9}</exclude>
                         <exclude>${exclude.test.10}</exclude>
                         <exclude>${exclude.test.11}</exclude>
+                        <exclude>${exclude.test.12}</exclude>
                     </excludes>
                     <properties>
                         <property>

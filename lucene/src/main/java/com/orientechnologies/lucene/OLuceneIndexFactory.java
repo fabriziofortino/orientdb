@@ -17,7 +17,7 @@
 package com.orientechnologies.lucene;
 
 import com.orientechnologies.common.log.OLogManager;
-import com.orientechnologies.lucene.engine.OLuceneIndexEngineDelegate;
+import com.orientechnologies.lucene.engine.OLuceneFullTextIndexEngine;
 import com.orientechnologies.lucene.index.OLuceneFullTextIndex;
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
@@ -39,16 +39,18 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import static com.orientechnologies.orient.core.metadata.schema.OClass.INDEX_TYPE.FULLTEXT;
+
 public class OLuceneIndexFactory implements OIndexFactory, ODatabaseLifecycleListener {
 
-  public static final String       LUCENE_ALGORITHM = "LUCENE";
+  public static final String LUCENE_ALGORITHM = "LUCENE";
 
   private static final Set<String> TYPES;
   private static final Set<String> ALGORITHMS;
 
   static {
     final Set<String> types = new HashSet<String>();
-    types.add(OClass.INDEX_TYPE.FULLTEXT.toString());
+    types.add(FULLTEXT.toString());
     TYPES = Collections.unmodifiableSet(types);
   }
 
@@ -100,10 +102,10 @@ public class OLuceneIndexFactory implements OIndexFactory, ODatabaseLifecycleLis
   }
 
   @Override
-  public OIndexEngine createIndexEngine(String algorithm, String name, Boolean durableInNonTxMode, OStorage storage, int version,
-      Map<String, String> engineProperties) {
+  public OIndexEngine createIndexEngine(String algorithm, String indexName, Boolean durableInNonTxMode, OStorage storage,
+      int version, Map<String, String> engineProperties) {
 
-    return new OLuceneIndexEngineDelegate(name, durableInNonTxMode, storage, version);
+    return new OLuceneFullTextIndexEngine(storage, indexName);
 
   }
 
@@ -114,29 +116,24 @@ public class OLuceneIndexFactory implements OIndexFactory, ODatabaseLifecycleLis
 
   @Override
   public void onCreate(ODatabaseInternal iDatabase) {
-    OLogManager.instance().debug(this, "onCreate");
-
   }
 
   @Override
   public void onOpen(ODatabaseInternal iDatabase) {
-    OLogManager.instance().debug(this, "onOpen");
-
   }
 
   @Override
   public void onClose(ODatabaseInternal iDatabase) {
-    OLogManager.instance().debug(this, "onClose");
   }
 
   @Override
-  public void onDrop(final ODatabaseInternal iDatabase) {
+  public void onDrop(final ODatabaseInternal db) {
     try {
-      if (iDatabase.isClosed())
+      if (db.isClosed())
         return;
 
       OLogManager.instance().debug(this, "Dropping Lucene indexes...");
-      for (OIndex idx : iDatabase.getMetadata().getIndexManager().getIndexes()) {
+      for (OIndex idx : db.getMetadata().getIndexManager().getIndexes()) {
 
         if (idx.getInternal() instanceof OLuceneFullTextIndex) {
 
@@ -151,11 +148,11 @@ public class OLuceneIndexFactory implements OIndexFactory, ODatabaseLifecycleLis
   }
 
   @Override
-  public void onCreateClass(ODatabaseInternal iDatabase, OClass iClass) {
+  public void onCreateClass(ODatabaseInternal db, OClass oClass) {
   }
 
   @Override
-  public void onDropClass(ODatabaseInternal iDatabase, OClass iClass) {
+  public void onDropClass(ODatabaseInternal db, OClass oClass) {
   }
 
   @Override

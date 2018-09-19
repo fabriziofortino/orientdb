@@ -22,7 +22,7 @@ import org.junit.Test;
  * Distributed TX test by using transactions against "plocal" protocol + shutdown and restart of a node.
  */
 public class HATxTest extends AbstractHARemoveNode {
-  final static int SERVERS = 3;
+  private final static int SERVERS = 3;
 
   @Test
   public void test() throws Exception {
@@ -52,6 +52,9 @@ public class HATxTest extends AbstractHARemoveNode {
     lastNodeIsUp.set(true);
 
     Thread.sleep(1000);
+
+    checkInsertedEntries();
+    checkIndexedEntries();
 
     banner("RESTARTING TESTS WITH SERVER " + (SERVERS - 1) + " UP...");
 

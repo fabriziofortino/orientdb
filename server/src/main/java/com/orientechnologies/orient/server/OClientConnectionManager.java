@@ -44,6 +44,7 @@ import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.net.ssl.SSLSocket;
 
 public class OClientConnectionManager {
   private static final long                                  TIMEOUT_PUSH     = 3000;
@@ -106,7 +107,7 @@ public class OClientConnectionManager {
         }
         iterator.remove();
       } else if(Boolean.TRUE.equals(entry.getValue().getTokenBased())){
-        if (entry.getValue().getToken() != null && !entry.getValue().getToken().isNowValid()) {
+        if (entry.getValue().getToken() != null && !entry.getValue().getToken().isNowValid() && !entry.getValue().getToken().getIsValid() ) {
           // Close the current session but not the network because can be used by another session.
           entry.getValue().close();
           iterator.remove();
@@ -272,7 +273,7 @@ public class OClientConnectionManager {
       final ONetworkProtocol protocol = connection.getProtocol();
       if (protocol != null)
         // INTERRUPT THE NEWTORK MANAGER
-        protocol.interruptCurrentOperation();
+        protocol.softShutdown();
     }
   }
 
@@ -407,17 +408,16 @@ public class OClientConnectionManager {
           OLogManager.instance().info(this, "Timeout on sending updated cluster configuration to the remote client %s",
               c.getRemoteAddress());
         }
-      } catch (IOException e) {
-        disconnect(c);
       } catch (Exception e) {
         OLogManager.instance().warn(this, "Cannot push cluster configuration to the client %s", e, c.getRemoteAddress());
-        disconnect(c);
       }
     }
   }
 
   public void shutdown() {
     timerTask.cancel();
+
+    List<ONetworkProtocol> toWait = new ArrayList<ONetworkProtocol>();
 
     final Iterator<Entry<Integer, OClientConnection>> iterator = connections.entrySet().iterator();
     while (iterator.hasNext()) {
@@ -448,7 +448,8 @@ public class OClientConnectionManager {
         if (socket != null && !socket.isClosed() && !socket.isInputShutdown()) {
           try {
             OLogManager.instance().debug(this, "Closing input socket of thread %s", protocol);
-            socket.shutdownInput();
+            if(!(socket instanceof SSLSocket)) // An SSLSocket will throw an UnsupportedOperationException.
+              socket.shutdownInput();
           } catch (IOException e) {
             OLogManager.instance().debug(this, "Error on closing connection of %s client during shutdown", e,
                 entry.getValue().getRemoteAddress());
@@ -465,11 +466,19 @@ public class OClientConnectionManager {
             OLogManager.instance().debug(this, "Sending interrupt signal to thread %s", protocol);
             protocol.interrupt();
           }
-
-          // protocol.join();
+          toWait.add(protocol);
         }
       }
     }
+
+    for (ONetworkProtocol protocol : toWait) {
+      try {
+        protocol.join();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+    }
+
   }
 
   public void killAllChannels() {
@@ -485,8 +494,10 @@ public class OClientConnectionManager {
         else
           socket = protocol.getChannel().socket;
 
-        if (socket != null && !socket.isClosed() && !socket.isInputShutdown())
-          socket.shutdownInput();
+        if (socket != null && !socket.isClosed() && !socket.isInputShutdown()) {
+          if(!(socket instanceof SSLSocket)) // An SSLSocket will throw an UnsupportedOperationException.
+            socket.shutdownInput();
+        }
 
       } catch (Exception e) {
         OLogManager.instance().debug(this, "Error on killing connection to %s client", e, entry.getValue().getRemoteAddress());

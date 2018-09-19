@@ -102,4 +102,12 @@ public class OCommandSQLParsingException extends OCoreException {
   public String getStatement() {
     return statement;
   }
+
+  @Override
+  public boolean equals(final Object obj) {
+    if (obj == null || !(obj instanceof OCommandSQLParsingException))
+      return false;
+
+    return toString().equals(obj.toString());
+  }
 }

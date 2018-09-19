@@ -14,14 +14,9 @@ import java.io.Reader;
 import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
-import static com.orientechnologies.orient.etl.OETLProcessor.LOG_LEVELS.*;
+import static com.orientechnologies.orient.etl.OETLProcessor.LOG_LEVELS.DEBUG;
 
 /**
  * An extractor based on Apache Commons CSV
@@ -38,8 +33,8 @@ public class OCSVExtractor extends OAbstractSourceExtractor {
   private boolean            unicode         = true;
   private Iterator<CSVRecord> recordIterator;
   private CSVFormat           csvFormat;
-  private String nullValue  = NULL_STRING;
-  private String dateFormat = "yyyy-MM-dd";
+  private String nullValue      = NULL_STRING;
+  private String dateFormat     = "yyyy-MM-dd";
   private String dateTimeFormat = "yyyy-MM-dd hh:mm";
 
   @Override
@@ -53,9 +48,10 @@ public class OCSVExtractor extends OAbstractSourceExtractor {
             + "{dateTimeFormat:{optional:true,description:'DateTime format used to parde dates. Default is yyyy-mm-dd HH:MM'}},"
             + "{quote:{optional:true,description:'String character delimiter. Use \"\" to do not use any delimitator'}},"
             + "{ignoreEmptyLines:{optional:true,description:'Ignore empty lines',type:'boolean'}},"
+            + "{ignoreMissingColumns:{optional:true,description:'Ignore empty columns',type:'boolean'}},"
             + "{skipFrom:{optional:true,description:'Line number where start to skip',type:'int'}},"
             + "{skipTo:{optional:true,description:'Line number where skip ends',type:'int'}},"
-            + "{predefinedFormat:{optional:true,description:'Name of standard csv format (from Apache commons-csv): DEFAULT, EXCEL, MYSQL, RFC4180, TDF',type:'String'}}"
+            + "{predefinedFormat:{optional:true,description:'Name of standard csv format (from Apache commons-csv): Default, Excel, MySQL, RFC4180, TDF',type:'String'}}"
             + "],input:['String'],output:'ODocument'}");
   }
 
@@ -73,10 +69,11 @@ public class OCSVExtractor extends OAbstractSourceExtractor {
   public void configure(OETLProcessor iProcessor, ODocument iConfiguration, OCommandContext iContext) {
     super.configure(iProcessor, iConfiguration, iContext);
 
-    csvFormat = CSVFormat.newFormat(',').withNullString(NULL_STRING).withEscape('\\').withQuote('"');
+    csvFormat = CSVFormat.newFormat(',').withNullString(NULL_STRING).withEscape('\\').withQuote('"').withCommentMarker('#');
 
     if (iConfiguration.containsField("predefinedFormat")) {
-      csvFormat = CSVFormat.valueOf(iConfiguration.<String>field("predefinedFormat").toUpperCase());
+      csvFormat = CSVFormat.valueOf(iConfiguration.<String>field("predefinedFormat"));
+
     }
 
     if (iConfiguration.containsField("separator")) {
@@ -87,12 +84,17 @@ public class OCSVExtractor extends OAbstractSourceExtractor {
       dateFormat = iConfiguration.<String>field("dateFormat");
     }
     if (iConfiguration.containsField("dateTimeFormat")) {
-      dateFormat = iConfiguration.<String>field("dateTimeFormat");
+      dateTimeFormat = iConfiguration.<String>field("dateTimeFormat");
     }
 
     if (iConfiguration.containsField("ignoreEmptyLines")) {
       boolean ignoreEmptyLines = iConfiguration.field("ignoreEmptyLines");
       csvFormat = csvFormat.withIgnoreEmptyLines(ignoreEmptyLines);
+    }
+
+    if (iConfiguration.containsField("ignoreMissingColumns")) {
+      boolean ignoreMissingColumns = iConfiguration.field("ignoreMissingColumns");
+      csvFormat = csvFormat.withAllowMissingColumnNames(ignoreMissingColumns);
     }
 
     if (iConfiguration.containsField("columnsOnFirstLine")) {
@@ -113,7 +115,7 @@ public class OCSVExtractor extends OAbstractSourceExtractor {
         final String[] parts = c.split(":");
         columnNames.add(parts[0]);
         if (parts.length > 1) {
-          columnTypes.put(parts[0], OType.valueOf(parts[1].toUpperCase()));
+          columnTypes.put(parts[0], OType.valueOf(parts[1].toUpperCase(Locale.ENGLISH)));
         } else {
           columnTypes.put(parts[0], OType.ANY);
         }
@@ -187,10 +189,12 @@ public class OCSVExtractor extends OAbstractSourceExtractor {
       for (Map.Entry<String, String> en : recordAsMap.entrySet()) {
 
         final String value = en.getValue();
-        if (value == null || nullValue.equals(value) || value.isEmpty())
-          doc.field(en.getKey(), null, OType.ANY);
-        else
-          doc.field(en.getKey(), determineTheType(value));
+        if (!csvFormat.getAllowMissingColumnNames() || !en.getKey().isEmpty()) {
+          if (value == null || nullValue.equals(value) || value.isEmpty())
+            doc.field(en.getKey(), null, OType.ANY);
+          else
+            doc.field(en.getKey(), determineTheType(value));
+        }
       }
 
     } else {
@@ -200,18 +204,18 @@ public class OCSVExtractor extends OAbstractSourceExtractor {
         final OType fieldType = typeEntry.getValue();
         String fieldValueAsString = recordAsMap.get(fieldName);
         try {
-          if (fieldType.getDefaultJavaType().equals(Date.class)) {
+          if (fieldType != null && fieldType.getDefaultJavaType() != null && fieldType.getDefaultJavaType().equals(Date.class)) {
             if (fieldType.equals(OType.DATE))
               doc.field(fieldName, transformToDate(fieldValueAsString));
             else
               doc.field(fieldName, transformToDateTime(fieldValueAsString));
           } else {
-          Object fieldValue = OType.convert(fieldValueAsString, fieldType.getDefaultJavaType());
-          doc.field(fieldName, fieldValue);
+            Object fieldValue = OType.convert(fieldValueAsString, fieldType.getDefaultJavaType());
+            doc.field(fieldName, fieldValue);
           }
         } catch (Exception e) {
           processor.getStats().incrementErrors();
-          log(OETLProcessor.LOG_LEVELS.ERROR, "Error on converting row %d field '%s' , value '%s' (class:%s) to type: %s",
+          log(OETLProcessor.LOG_LEVELS.ERROR, "Error on converting row %d field '%s' value '%s' (class:%s) to type: %s",
               csvRecord.getRecordNumber(), fieldName, fieldValueAsString, fieldValueAsString.getClass().getName(), fieldType);
         }
       }

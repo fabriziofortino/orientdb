@@ -20,7 +20,6 @@
 package com.orientechnologies.orient.core.storage;
 
 import com.orientechnologies.common.concur.resource.OSharedContainer;
-import com.orientechnologies.orient.core.OUncompletedCommit;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
 import com.orientechnologies.orient.core.config.OStorageConfiguration;
 import com.orientechnologies.orient.core.conflict.ORecordConflictStrategy;
@@ -85,7 +84,7 @@ public interface OStorage extends OBackupable, OSharedContainer {
   OStorageOperationResult<OPhysicalPosition> createRecord(ORecordId iRecordId, byte[] iContent, int iRecordVersion,
       byte iRecordType, int iMode, ORecordCallback<Long> iCallback);
 
-  OStorageOperationResult<ORawBuffer> readRecord(ORecordId iRid, String iFetchPlan, boolean iIgnoreCache,
+  OStorageOperationResult<ORawBuffer> readRecord(ORecordId iRid, String iFetchPlan, boolean iIgnoreCache, boolean prefetchRecords,
       ORecordCallback<ORawBuffer> iCallback);
 
   OStorageOperationResult<ORawBuffer> readRecordIfVersionIsNotLatest(ORecordId rid, String fetchPlan, boolean ignoreCache,
@@ -95,9 +94,9 @@ public interface OStorage extends OBackupable, OSharedContainer {
       byte iRecordType, int iMode, ORecordCallback<Integer> iCallback);
 
   /**
-   * Resurrects a record that was previously deleted, with a new content.
+   * Resurrects a record that was previously deleted.
    */
-  OStorageOperationResult<Integer> recyclePosition(ORecordId iRecordId, byte[] iContent, int iVersion, byte iRecordType);
+  void recyclePosition(ORecordId record, byte[] content, int recordVersion, byte recordType);
 
   OStorageOperationResult<Boolean> deleteRecord(ORecordId iRecordId, int iVersion, int iMode, ORecordCallback<Boolean> iCallback);
 
@@ -107,8 +106,6 @@ public interface OStorage extends OBackupable, OSharedContainer {
 
   // TX OPERATIONS
   List<ORecordOperation> commit(OTransaction iTx, Runnable callback);
-
-  OUncompletedCommit<List<ORecordOperation>> initiateCommit(OTransaction iTx, Runnable callback);
 
   // TX OPERATIONS
   void rollback(OTransaction iTx);
@@ -127,8 +124,7 @@ public interface OStorage extends OBackupable, OSharedContainer {
   /**
    * Add a new cluster into the storage.
    *
-   * @param iClusterName
-   *          name of the cluster
+   * @param iClusterName   name of the cluster
    * @param forceListBased
    * @param iParameters
    */
@@ -137,10 +133,8 @@ public interface OStorage extends OBackupable, OSharedContainer {
   /**
    * Add a new cluster into the storage.
    *
-   * @param iClusterName
-   *          name of the cluster
-   * @param iRequestedId
-   *          requested id of the cluster
+   * @param iClusterName   name of the cluster
+   * @param iRequestedId   requested id of the cluster
    * @param forceListBased
    * @param iParameters
    */
@@ -151,8 +145,8 @@ public interface OStorage extends OBackupable, OSharedContainer {
   /**
    * Drops a cluster.
    *
-   * @param iId
-   *          id of the cluster to delete
+   * @param iId id of the cluster to delete
+   *
    * @return true if has been removed, otherwise false
    */
   boolean dropCluster(int iId, final boolean iTruncate);
@@ -202,8 +196,7 @@ public interface OStorage extends OBackupable, OSharedContainer {
    * Returns a pair of long values telling the begin and end positions of data in the requested cluster. Useful to know the range of
    * the records.
    *
-   * @param currentClusterId
-   *          Cluster id
+   * @param currentClusterId Cluster id
    */
   long[] getClusterDataRange(int currentClusterId);
 
@@ -254,8 +247,8 @@ public interface OStorage extends OBackupable, OSharedContainer {
   void setConflictStrategy(ORecordConflictStrategy iResolver);
 
   /**
-   *
    * @param backupDirectory
+   *
    * @return Backup file name
    */
   String incrementalBackup(String backupDirectory);

@@ -1,26 +1,19 @@
 package com.orientechnologies.orient.jdbc;
 
 import com.orientechnologies.orient.core.OConstants;
+import com.orientechnologies.orient.core.metadata.schema.OType;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 public class OrientJdbcDatabaseMetaDataTest extends OrientJdbcBaseTest {
 
@@ -35,7 +28,7 @@ public class OrientJdbcDatabaseMetaDataTest extends OrientJdbcBaseTest {
   @Test
   public void verifyDriverAndDatabaseVersions() throws SQLException {
 
-    assertEquals("memory:test", metaData.getURL());
+    assertEquals("memory:OrientJdbcDatabaseMetaDataTest", metaData.getURL());
     assertEquals("admin", metaData.getUserName());
     assertEquals("OrientDB", metaData.getDatabaseProductName());
     assertEquals(OConstants.ORIENT_VERSION, metaData.getDatabaseProductVersion());
@@ -43,7 +36,7 @@ public class OrientJdbcDatabaseMetaDataTest extends OrientJdbcBaseTest {
     assertEquals(2, metaData.getDatabaseMinorVersion());
 
     assertEquals("OrientDB JDBC Driver", metaData.getDriverName());
-    assertEquals("OrientDB "+OConstants.getVersion()+" JDBC Driver", metaData.getDriverVersion());
+    assertEquals("OrientDB " + OConstants.getVersion() + " JDBC Driver", metaData.getDriverVersion());
     assertEquals(2, metaData.getDriverMajorVersion());
     assertEquals(2, metaData.getDriverMinorVersion());
 
@@ -83,13 +76,14 @@ public class OrientJdbcDatabaseMetaDataTest extends OrientJdbcBaseTest {
 
     final String keywordsStr = metaData.getSQLKeywords();
     assertNotNull(keywordsStr);
-    assertThat(Arrays.asList(keywordsStr.toUpperCase().split(",\\s*"))).contains("TRAVERSE");
+    assertThat(Arrays.asList(keywordsStr.toUpperCase(Locale.ENGLISH).split(",\\s*"))).contains("TRAVERSE");
   }
 
   @Test
   public void shouldRetrieveUniqueIndexInfoForTable() throws Exception {
 
-    ResultSet indexInfo = metaData.getIndexInfo("test", "test", "Item", true, false);
+    ResultSet indexInfo = metaData
+        .getIndexInfo("OrientJdbcDatabaseMetaDataTest", "OrientJdbcDatabaseMetaDataTest", "Item", true, false);
 
     indexInfo.next();
 
@@ -104,6 +98,7 @@ public class OrientJdbcDatabaseMetaDataTest extends OrientJdbcBaseTest {
   }
 
   @Test
+  @Ignore
   public void getFields() throws SQLException {
     ResultSet rs = conn.createStatement().executeQuery("select from OUser");
 
@@ -142,84 +137,121 @@ public class OrientJdbcDatabaseMetaDataTest extends OrientJdbcBaseTest {
 
   @Test
   public void shouldFetchAllTables() throws SQLException {
-    ResultSet rs = this.metaData.getTables(null, null, null, null);
-    int tableCount = rsSizeOf(rs);
+    ResultSet rs = metaData.getTables(null, null, null, null);
+    int tableCount = sizeOf(rs);
 
     assertThat(tableCount).isEqualTo(16);
 
   }
 
-  private int rsSizeOf(ResultSet rs) throws SQLException {
-    int tableCount = 0;
-
-    while (rs.next()) {
-      tableCount++;
-    }
-    return tableCount;
-  }
-
   @Test
   public void shouldFillSchemaAndCatalogWithDatabaseName() throws SQLException {
-    ResultSet rs = this.metaData.getTables(null, null, null, null);
+    ResultSet rs = metaData.getTables(null, null, null, null);
 
     while (rs.next()) {
-      assertThat(rs.getString("TABLE_SCHEM")).isEqualTo("test");
-      assertThat(rs.getString("TABLE_CAT")).isEqualTo("test");
+      assertThat(rs.getString("TABLE_SCHEM")).isEqualTo("OrientJdbcDatabaseMetaDataTest");
+      assertThat(rs.getString("TABLE_CAT")).isEqualTo("OrientJdbcDatabaseMetaDataTest");
     }
 
   }
 
   @Test
   public void shouldGetAllTablesFilteredByAllTypes() throws SQLException {
-    ResultSet rs = this.metaData.getTableTypes();
+    ResultSet rs = metaData.getTableTypes();
     List<String> tableTypes = new ArrayList<String>(2);
     while (rs.next()) {
       tableTypes.add(rs.getString(1));
     }
-    rs = this.metaData.getTables(null, null, null, tableTypes.toArray(new String[2]));
-    int tableCount = rsSizeOf(rs);
+    rs = metaData.getTables(null, null, null, tableTypes.toArray(new String[2]));
+    int tableCount = sizeOf(rs);
     assertThat(tableCount).isEqualTo(16);
   }
 
   @Test
   public void getNoTablesFilteredByEmptySetOfTypes() throws SQLException {
-    final ResultSet rs = this.metaData.getTables(null, null, null, new String[0]);
-    int tableCount = rsSizeOf(rs);
+    final ResultSet rs = metaData.getTables(null, null, null, new String[0]);
+    int tableCount = sizeOf(rs);
 
     assertThat(tableCount).isEqualTo(0);
   }
 
   @Test
   public void getSingleTable() throws SQLException {
-    ResultSet rs = this.metaData.getTables(null, null, "ouser", null);
+    ResultSet rs = metaData.getTables(null, null, "ouser", null);
+    rs.next();
+    for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
 
-    assertThat(rsSizeOf(rs)).isEqualTo(1);
+      System.out.println(
+          rs.getMetaData().getColumnName(i));
+    }
+    assertThat(rs.getString("TABLE_NAME")).isEqualTo("OUser");
+    assertThat(rs.getString("TABLE_CAT")).isEqualTo("OrientJdbcDatabaseMetaDataTest");
+    assertThat(rs.getString("TABLE_SCHEM")).isEqualTo("OrientJdbcDatabaseMetaDataTest");
+    assertThat(rs.getString("REMARKS")).isNull();
+    assertThat(rs.getString("REF_GENERATION")).isNull();
+    assertThat(rs.getString("TYPE_NAME")).isNull();
+
+//
+    assertThat(rs.next()).isFalse();
   }
 
   @Test
   public void shouldGetSingleColumnOfArticle() throws SQLException {
-    ResultSet rs = this.metaData.getColumns(null, null, "Article", "uuid");
+    ResultSet rs = metaData.getColumns(null, null, "Article", "uuid");
+    rs.next();
 
-    assertThat(rsSizeOf(rs)).isEqualTo(1);
+    assertThat(rs.getString("TABLE_NAME")).isEqualTo("Article");
+    assertThat(rs.getString("COLUMN_NAME")).isEqualTo("uuid");
+    assertThat(rs.getString("TYPE_NAME")).isEqualTo("INTEGER");
+    assertThat(rs.getInt("DATA_TYPE")).isEqualTo(4);
+
+    assertThat(rs.next()).isFalse();
   }
 
   @Test
   public void shouldGetAllColumnsOfArticle() throws SQLException {
-    ResultSet rs = this.metaData.getColumns(null, null, "Article", null);
+    ResultSet rs = metaData.getColumns(null, null, "Article", null);
 
-    assertThat(rsSizeOf(rs)).isEqualTo(5);
+    while (rs.next()) {
+      assertThat(rs.getString("TABLE_NAME")).isEqualTo("Article");
+      assertThat(rs.getString("COLUMN_NAME")).isIn("date", "uuid", "author", "title", "content");
+      assertThat(rs.getInt("DATA_TYPE")).isIn(9, 12, 4, 91, 2000);
+      assertThat(rs.getString("TYPE_NAME")).isIn("LINK", "DATE", "STRING", "INTEGER");
+
+    }
   }
 
   @Test
-  //FIXME this is not a test: what is the target?
-  public void shouldGetAllFields() throws SQLException {
-    ResultSet rsmc = conn.getMetaData().getColumns(null, null, "OUser", null);
-    Set<String> fieldNames = new HashSet<String>();
-    while (rsmc.next()) {
-      fieldNames.add(rsmc.getString("COLUMN_NAME"));
-    }
+  public void shouldGetAllIndexesOnArticle() throws Exception {
+    ResultSet rs = metaData.getIndexInfo(null, null, "Article", true, true);
 
-    fieldNames.removeAll(Arrays.asList("name", "password", "roles", "status"));
+    rs.next();
+
+    assertThat(rs.getString("COLUMN_NAME")).isEqualTo("uuid");
+    assertThat(rs.getString("INDEX_NAME")).isEqualTo("Article.uuid");
+    assertThat(rs.getBoolean("NON_UNIQUE")).isFalse();
+
+  }
+
+  @Test
+  public void shouldGetPrimaryKeyOfArticle() throws Exception {
+    ResultSet rs = metaData.getPrimaryKeys(null, null, "Article");
+
+    rs.next();
+    assertThat(rs.getString("TABLE_NAME")).isEqualTo("Article");
+    assertThat(rs.getString("COLUMN_NAME")).isEqualTo("uuid");
+    assertThat(rs.getString("PK_NAME")).isEqualTo("Article.uuid");
+    assertThat(rs.getInt("KEY_SEQ")).isEqualTo(1);
+
+  }
+
+  private int sizeOf(ResultSet rs) throws SQLException {
+    int tableCount = 0;
+
+    while (rs.next()) {
+      tableCount++;
+    }
+    return tableCount;
   }
 
 }

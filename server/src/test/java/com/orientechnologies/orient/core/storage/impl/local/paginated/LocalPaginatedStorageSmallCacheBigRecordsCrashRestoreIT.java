@@ -51,7 +51,7 @@ public class LocalPaginatedStorageSmallCacheBigRecordsCrashRestoreIT {
     buildDir = new File(buildDirectory);
 
     if (buildDir.exists())
-      OFileUtils.deleteFolderIfEmpty(buildDir);
+      OFileUtils.deleteRecursively(buildDir);
 
     buildDir.mkdir();
 
@@ -66,8 +66,9 @@ public class LocalPaginatedStorageSmallCacheBigRecordsCrashRestoreIT {
     System.setProperty("ORIENTDB_HOME", buildDirectory);
 
     ProcessBuilder processBuilder = new ProcessBuilder(javaExec, "-Xmx2048m", "-XX:MaxDirectMemorySize=512g", "-classpath",
-        System.getProperty("java.class.path"), "-DmutexFile=" + mutexFile.getCanonicalPath(), "-DORIENTDB_HOME=" + buildDirectory, RemoteDBRunner.class.getName());
-    processBuilder.inheritIO();
+        System.getProperty("java.class.path"), "-DmutexFile=" + mutexFile.getCanonicalPath(), "-DORIENTDB_HOME=" + buildDirectory,
+        RemoteDBRunner.class.getName());
+    CrashRestoreUtils.inheritIO(processBuilder);
 
     process = processBuilder.start();
 
@@ -130,7 +131,7 @@ public class LocalPaginatedStorageSmallCacheBigRecordsCrashRestoreIT {
     TimeUnit.MINUTES.sleep(5);
 
     long lastTs = System.currentTimeMillis();
-    process.destroy();
+    CrashRestoreUtils.destroyForcibly(process);
     process.waitFor();
 
     System.out.println("OrientDB server process was destroyed");
@@ -185,7 +186,7 @@ public class LocalPaginatedStorageSmallCacheBigRecordsCrashRestoreIT {
 
       for (OPhysicalPosition physicalPosition : physicalPositions) {
 
-        rid.clusterPosition = physicalPosition.clusterPosition;
+        rid.setClusterPosition(physicalPosition.clusterPosition);
 
         baseDocumentTx.activateOnCurrentThread();
         ODocument baseDocument = baseDocumentTx.load(rid);

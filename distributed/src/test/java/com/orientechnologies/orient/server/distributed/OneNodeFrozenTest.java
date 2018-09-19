@@ -15,27 +15,27 @@
  */
 package com.orientechnologies.orient.server.distributed;
 
+import com.orientechnologies.common.util.OCallable;
+import com.orientechnologies.orient.client.remote.OServerAdmin;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import org.junit.Assert;
+import org.junit.Test;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.junit.Assert;
-import org.junit.Test;
-
-import com.orientechnologies.orient.client.remote.OServerAdmin;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 
 /**
  * Starts 3 servers, freeze node3, check other nodes can work in the meanwhile and node3 is realigned once the frozen node is
  * released.
  */
 public class OneNodeFrozenTest extends AbstractServerClusterTxTest {
-  final static int    SERVERS          = 3;
-  volatile boolean    inserting        = true;
-  volatile int        serverStarted    = 0;
-  volatile boolean    freezeInProgress = false;
-  final AtomicInteger nodeLefts        = new AtomicInteger();
+  private final static int           SERVERS          = 3;
+  private volatile     boolean       inserting        = true;
+  private volatile     int           serverStarted    = 0;
+  private volatile     boolean       freezeInProgress = false;
+  private final        AtomicInteger nodeLefts        = new AtomicInteger();
 
   @Test
   public void test() throws Exception {
@@ -88,46 +88,46 @@ public class OneNodeFrozenTest extends AbstractServerClusterTxTest {
           try {
             // CRASH LAST SERVER
             executeWhen(new Callable<Boolean>() {
-              // CONDITION
-              @Override
-              public Boolean call() throws Exception {
-                final ODatabaseDocumentTx database = poolFactory.get(getDatabaseURL(serverInstance.get(0)), "admin", "admin")
-                    .acquire();
-                try {
-                  return database.countClass("Person") > (count * SERVERS) * 1 / 3;
-                } finally {
-                  database.close();
-                }
-              }
-            }, // ACTION
+                          // CONDITION
+                          @Override
+                          public Boolean call() throws Exception {
+                            final ODatabaseDocumentTx database = poolFactory.get(getDatabaseURL(serverInstance.get(0)), "admin", "admin")
+                                .acquire();
+                            try {
+                              return database.countClass("Person") > (count * SERVERS) * 1 / 3;
+                            } finally {
+                              database.close();
+                            }
+                          }
+                        }, // ACTION
                 new Callable() {
-              @Override
-              public Object call() throws Exception {
-                Assert.assertTrue("Insert was too fast", inserting);
+                  @Override
+                  public Object call() throws Exception {
+                    Assert.assertTrue("Insert was too fast", inserting);
 
-                banner("FREEZING SERVER " + (SERVERS - 1));
+                    banner("FREEZING SERVER " + (SERVERS - 1));
 
-                freezeInProgress = true;
-                try {
+                    freezeInProgress = true;
+                    try {
 
-                  final OServerAdmin admin = new OServerAdmin(getDatabaseURL(server)).connect("root", "test");
+                      final OServerAdmin admin = new OServerAdmin(getDatabaseURL(server)).connect("root", "test");
 
-                  admin.freezeDatabase("plocal");
-                  try {
-                    Thread.sleep(10000);
-                  } finally {
-                    admin.releaseDatabase("plocal");
+                      admin.freezeDatabase("plocal");
+                      try {
+                        Thread.sleep(10000);
+                      } finally {
+                        admin.releaseDatabase("plocal");
+                      }
+
+                    } catch (IOException e) {
+                      e.printStackTrace();
+                    } finally {
+                      banner("RELEASING SERVER " + (SERVERS - 1));
+                      freezeInProgress = false;
+                    }
+                    return null;
                   }
-
-                } catch (IOException e) {
-                  e.printStackTrace();
-                } finally {
-                  banner("RELEASING SERVER " + (SERVERS - 1));
-                  freezeInProgress = false;
-                }
-                return null;
-              }
-            });
+                });
 
           } catch (Exception e) {
             e.printStackTrace();
@@ -141,12 +141,16 @@ public class OneNodeFrozenTest extends AbstractServerClusterTxTest {
   @Override
   protected void onAfterExecution() throws Exception {
     inserting = false;
+
+    waitFor(10000, new OCallable<Boolean, Void>() {
+      @Override
+      public Boolean call(Void iArgument) {
+        return !freezeInProgress;
+      }
+    }, "Still frozen");
+
     Assert.assertFalse(freezeInProgress);
     Assert.assertEquals("Found some nodes has been restarted", 0, nodeLefts.get());
-  }
-
-  protected String getDatabaseURL(final ServerRun server) {
-    return "remote:" + server.getBinaryProtocolAddress() + "/" + getDatabaseName();
   }
 
   @Override

@@ -19,7 +19,6 @@
  */
 package com.orientechnologies.orient.core.tx;
 
-import com.orientechnologies.orient.core.OUncompletedCommit;
 import com.orientechnologies.orient.core.db.ODatabase.OPERATION_MODE;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
@@ -35,7 +34,6 @@ import com.orientechnologies.orient.core.storage.OStorage;
 
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public interface OTransaction {
   enum TXTYPE {
@@ -55,10 +53,6 @@ public interface OTransaction {
   void commit();
 
   void commit(boolean force);
-
-  OUncompletedCommit<Void> initiateCommit();
-
-  OUncompletedCommit<Void> initiateCommit(boolean force);
 
   void rollback();
 
@@ -104,6 +98,8 @@ public interface OTransaction {
       ORecordCallback<? extends Number> iRecordCreatedCallback, ORecordCallback<Integer> iRecordUpdatedCallback);
 
   void deleteRecord(ORecord iRecord, OPERATION_MODE iMode);
+
+  void recycleRecord(ORecord iRecord);
 
   int getId();
 

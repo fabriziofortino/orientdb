@@ -51,6 +51,7 @@ import com.orientechnologies.orient.core.storage.impl.local.paginated.wal.OLogSe
 import com.orientechnologies.orient.core.storage.impl.local.paginated.wal.OWriteAheadLog;
 
 import java.io.*;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -64,7 +65,7 @@ import java.util.zip.ZipOutputStream;
 public class OLocalPaginatedStorage extends OAbstractPaginatedStorage implements OFreezableStorageComponent {
 
   private static String[] ALL_FILE_EXTENSIONS = { ".ocf", ".pls", ".pcl", ".oda", ".odh", ".otx", ".ocs", ".oef", ".oem", ".oet",
-      ".fl", ODiskWriteAheadLog.WAL_SEGMENT_EXTENSION, ODiskWriteAheadLog.MASTER_RECORD_EXTENSION,
+      ".fl", ".json", ".DS_Store", ODiskWriteAheadLog.WAL_SEGMENT_EXTENSION, ODiskWriteAheadLog.MASTER_RECORD_EXTENSION,
       OHashTableIndexEngine.BUCKET_FILE_EXTENSION, OHashTableIndexEngine.METADATA_FILE_EXTENSION,
       OHashTableIndexEngine.TREE_FILE_EXTENSION, OHashTableIndexEngine.NULL_BUCKET_FILE_EXTENSION,
       OClusterPositionMap.DEF_EXTENSION, OSBTreeIndexEngine.DATA_FILE_EXTENSION, OWOWCache.NAME_ID_MAP_EXTENSION,
@@ -105,50 +106,82 @@ public class OLocalPaginatedStorage extends OAbstractPaginatedStorage implements
     storagePath = OIOUtils.getPathFromDatabaseName(sp);
     variableParser = new OStorageVariableParser(storagePath);
 
+    dirtyFlag = new OPaginatedStorageDirtyFlag(storagePath + File.separator + "dirty.fl");
+
     configuration = new OStorageConfigurationSegment(this);
 
     DELETE_MAX_RETRIES = OGlobalConfiguration.FILE_DELETE_RETRY.getValueAsInteger();
     DELETE_WAIT_TIME = OGlobalConfiguration.FILE_DELETE_DELAY.getValueAsInteger();
-
-    dirtyFlag = new OPaginatedStorageDirtyFlag(storagePath + File.separator + "dirty.fl");
   }
 
   @Override
   public void create(final Map<String, Object> iProperties) {
-    stateLock.acquireWriteLock();
     try {
-      final File storageFolder = new File(storagePath);
-      if (!storageFolder.exists())
-        if (!storageFolder.mkdirs())
-          throw new OStorageException("Cannot create folders in storage with path " + storagePath);
+      stateLock.acquireWriteLock();
+      try {
+        final File storageFolder = new File(storagePath);
+        if (!storageFolder.exists())
+          if (!storageFolder.mkdirs())
+            throw new OStorageException("Cannot create folders in storage with path " + storagePath);
 
-      super.create(iProperties);
-    } finally {
-      stateLock.releaseWriteLock();
+        super.create(iProperties);
+      } finally {
+        stateLock.releaseWriteLock();
+      }
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
     }
   }
 
   @Override
   protected String normalizeName(String name) {
-    final int firstIndexOf = name.lastIndexOf('/');
-    final int secondIndexOf = name.lastIndexOf(File.separator);
+    try {
+      final int firstIndexOf = name.lastIndexOf('/');
+      final int secondIndexOf = name.lastIndexOf(File.separator);
 
-    if (firstIndexOf >= 0 || secondIndexOf >= 0)
-      return name.substring(Math.max(firstIndexOf, secondIndexOf) + 1);
-    else
-      return name;
+      if (firstIndexOf >= 0 || secondIndexOf >= 0)
+        return name.substring(Math.max(firstIndexOf, secondIndexOf) + 1);
+      else
+        return name;
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
+    }
   }
 
   public boolean exists() {
-    if (status == STATUS.OPEN)
-      return true;
+    try {
+      if (status == STATUS.OPEN)
+        return true;
 
-    return exists(storagePath);
+      return exists(storagePath);
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
+    }
   }
 
   @Override
   public String getURL() {
-    return OEngineLocalPaginated.NAME + ":" + url;
+    try {
+      return OEngineLocalPaginated.NAME + ":" + url;
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
+    }
   }
 
   public String getStoragePath() {
@@ -161,65 +194,109 @@ public class OLocalPaginatedStorage extends OAbstractPaginatedStorage implements
 
   @Override
   public String getType() {
-    return OEngineLocalPaginated.NAME;
+    try {
+      return OEngineLocalPaginated.NAME;
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
+    }
   }
 
   @Override
   public List<String> backup(OutputStream out, Map<String, Object> options, final Callable<Object> callable,
       final OCommandOutputListener iOutput, final int compressionLevel, final int bufferSize) throws IOException {
-    if (out == null)
-      throw new IllegalArgumentException("Backup output is null");
-
-    freeze(false);
     try {
-      if (callable != null)
-        try {
-          callable.call();
-        } catch (Exception e) {
-          OLogManager.instance().error(this, "Error on callback invocation during backup", e);
-        }
+      if (out == null)
+        throw new IllegalArgumentException("Backup output is null");
 
-      final OutputStream bo = bufferSize > 0 ? new BufferedOutputStream(out, bufferSize) : out;
+      freeze(false);
       try {
-        return OZIPCompressionUtil
-            .compressDirectory(new File(getStoragePath()).getAbsolutePath(), bo, new String[] { ".wal", ".fl" }, iOutput,
-                compressionLevel);
-      } finally {
-        if (bufferSize > 0) {
-          bo.flush();
-          bo.close();
+        if (callable != null)
+          try {
+            callable.call();
+          } catch (Exception e) {
+            OLogManager.instance().error(this, "Error on callback invocation during backup", e);
+          }
+
+        final OutputStream bo = bufferSize > 0 ? new BufferedOutputStream(out, bufferSize) : out;
+        try {
+          return OZIPCompressionUtil
+              .compressDirectory(new File(getStoragePath()).getAbsolutePath(), bo, new String[] { ".wal", ".fl" }, iOutput,
+                  compressionLevel);
+        } finally {
+          if (bufferSize > 0) {
+            bo.flush();
+            bo.close();
+          }
         }
+      } finally {
+        release();
       }
-    } finally {
-      release();
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
     }
   }
 
   @Override
   public void restore(InputStream in, Map<String, Object> options, final Callable<Object> callable,
       final OCommandOutputListener iListener) throws IOException {
-    if (!isClosed())
-      close(true, false);
+    try {
+      if (!isClosed())
+        close(true, false);
 
-    OZIPCompressionUtil.uncompressDirectory(in, getStoragePath(), iListener);
-
-    if (callable != null)
-      try {
-        callable.call();
-      } catch (Exception e) {
-        OLogManager.instance().error(this, "Error on calling callback on database restore");
+      File dbDir = new File(OIOUtils.getPathFromDatabaseName(OSystemVariableResolver.resolveSystemVariables(url)));
+      final File[] storageFiles = dbDir.listFiles();
+      // TRY TO DELETE ALL THE FILES
+      for (File f : storageFiles) {
+        // DELETE ONLY THE SUPPORTED FILES
+        for (String ext : ALL_FILE_EXTENSIONS)
+          if (f.getPath().endsWith(ext)) {
+            f.delete();
+            break;
+          }
       }
 
-    open(null, null, null);
+      OZIPCompressionUtil.uncompressDirectory(in, getStoragePath(), iListener);
+
+      if (callable != null)
+        try {
+          callable.call();
+        } catch (Exception e) {
+          OLogManager.instance().error(this, "Error on calling callback on database restore");
+        }
+
+      open(null, null, null);
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
+    }
   }
 
   @Override
   public OStorageConfiguration getConfiguration() {
-    stateLock.acquireReadLock();
     try {
-      return super.getConfiguration();
-    } finally {
-      stateLock.releaseReadLock();
+      stateLock.acquireReadLock();
+      try {
+        return super.getConfiguration();
+      } finally {
+        stateLock.releaseReadLock();
+      }
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
     }
   }
 
@@ -367,7 +444,6 @@ public class OLocalPaginatedStorage extends OAbstractPaginatedStorage implements
           throw new OStorageException("Cannot terminate full checkpoint task");
       }
     } catch (InterruptedException e) {
-      Thread.interrupted();
       throw OException.wrapException(new OStorageException("Error on closing of storage '" + name), e);
     }
   }
@@ -377,7 +453,7 @@ public class OLocalPaginatedStorage extends OAbstractPaginatedStorage implements
     File dbDir;// GET REAL DIRECTORY
     dbDir = new File(OIOUtils.getPathFromDatabaseName(OSystemVariableResolver.resolveSystemVariables(url)));
     if (!dbDir.exists() || !dbDir.isDirectory())
-      dbDir = dbDir.getParentFile();
+      return;
 
     // RETRIES
     for (int i = 0; i < DELETE_MAX_RETRIES; ++i) {
@@ -403,7 +479,9 @@ public class OLocalPaginatedStorage extends OAbstractPaginatedStorage implements
         if (notDeletedFiles == 0) {
           // TRY TO DELETE ALSO THE DIRECTORY IF IT'S EMPTY
           if (!dbDir.delete())
-            OLogManager.instance().error(this, "Cannot delete storage directory with path " + dbDir.getAbsolutePath());
+            OLogManager.instance().error(this,
+                "Cannot delete storage directory with path " + dbDir.getAbsolutePath() + " because directory is not empty. Files: "
+                    + Arrays.toString(dbDir.listFiles()));
           return;
         }
       } else
@@ -428,6 +506,52 @@ public class OLocalPaginatedStorage extends OAbstractPaginatedStorage implements
   @Override
   protected boolean isDirty() throws IOException {
     return dirtyFlag.isDirty();
+  }
+
+  @Override
+  public boolean isIndexRebuildScheduled() {
+    checkOpeness();
+
+    stateLock.acquireReadLock();
+    try {
+      checkOpeness();
+
+      return dirtyFlag.isIndexRebuildScheduled();
+    } finally {
+      stateLock.releaseReadLock();
+    }
+  }
+
+  @Override
+  protected boolean isIndexRebuildScheduledInternal() {
+    return dirtyFlag.isIndexRebuildScheduled();
+  }
+
+  @Override
+  protected void scheduleIndexRebuild() throws IOException {
+    dirtyFlag.scheduleIndexRebuild();
+  }
+
+  @Override
+  public void cancelIndexRebuild() throws IOException {
+    try {
+      checkOpeness();
+
+      stateLock.acquireReadLock();
+      try {
+        checkOpeness();
+
+        dirtyFlag.clearIndexRebuild();
+      } finally {
+        stateLock.releaseReadLock();
+      }
+    } catch (RuntimeException e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Error e) {
+      throw logAndPrepareForRethrow(e);
+    } catch (Throwable t) {
+      throw logAndPrepareForRethrow(t);
+    }
   }
 
   @Override

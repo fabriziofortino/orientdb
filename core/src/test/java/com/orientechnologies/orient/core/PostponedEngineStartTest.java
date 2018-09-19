@@ -262,7 +262,7 @@ public class PostponedEngineStartTest {
 
         @Override
         public OStorageOperationResult<ORawBuffer> readRecord(ORecordId iRid, String iFetchPlan, boolean iIgnoreCache,
-            ORecordCallback<ORawBuffer> iCallback) {
+            boolean prefetchRecords, ORecordCallback<ORawBuffer> iCallback) {
           return null;
         }
 
@@ -279,9 +279,7 @@ public class PostponedEngineStartTest {
         }
 
         @Override
-        public OStorageOperationResult<Integer> recyclePosition(ORecordId iRecordId, byte[] iContent, int iVersion,
-            byte iRecordType) {
-          return null;
+        public void recyclePosition(ORecordId iRecordId, final byte[] content, final int recordVersion, final byte recordType) {
         }
 
         @Override
@@ -302,11 +300,6 @@ public class PostponedEngineStartTest {
 
         @Override
         public List<ORecordOperation> commit(OTransaction iTx, Runnable callback) {
-          return null;
-        }
-
-        @Override
-        public OUncompletedCommit<List<ORecordOperation>> initiateCommit(OTransaction iTx, Runnable callback) {
           return null;
         }
 

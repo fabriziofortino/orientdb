@@ -54,9 +54,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Provides an implementation of OServerSecurity.
- * 
+ *
  * @author S. Colin Leister
- * 
+ *
  */
 public class ODefaultServerSecurity implements OSecurityFactory, OServerLifecycleListener, OServerSecurity {
   private boolean                             enabled                = false;                                    // Defaults to not
@@ -71,13 +71,13 @@ public class ODefaultServerSecurity implements OSecurityFactory, OServerLifecycl
   // default authentication mode if external authentication fails.
   private boolean                             allowDefault           = true;
 
-  private Object                              passwordValidatorSynch = new Object();
+  private final Object                        passwordValidatorSynch = new Object();
   private OPasswordValidator                  passwordValidator;
 
-  private Object                              importLDAPSynch        = new Object();
+  private final Object                        importLDAPSynch        = new Object();
   private OSecurityComponent                  importLDAP;
 
-  private Object                              auditingSynch          = new Object();
+  private final Object                        auditingSynch          = new Object();
   private OAuditingService                    auditingService;
 
   private ODocument                           configDoc;                                                         // Holds the
@@ -203,7 +203,7 @@ public class ODefaultServerSecurity implements OSecurityFactory, OServerLifecycl
             if (sah != null && sah.trim().length() > 0) {
               // If we're not the first authenticator, then append "\n".
               if (sb.length() > 0) {
-                sb.append("\n");
+                sb.append("\r\n");
               }
               sb.append(sah);
             }
@@ -546,10 +546,10 @@ public class ODefaultServerSecurity implements OSecurityFactory, OServerLifecycl
       public void run() {
         try {
           OClientConnectionManager ccm = server.getClientConnectionManager();
-
           if (ccm != null) {
             for (OClientConnection cc : ccm.getConnections()) {
               try {
+                cc.acquire();
                 ODatabaseDocumentInternal ccDB = cc.getDatabase();
                 if (ccDB != null) {
                   ccDB.activateOnCurrentThread();
@@ -561,6 +561,9 @@ public class ODefaultServerSecurity implements OSecurityFactory, OServerLifecycl
                 }
               } catch (Exception ex) {
                 OLogManager.instance().error(this, "securityRecordChange() Exception: ", ex);
+              }
+              finally {
+                cc.release();
               }
             }
           }

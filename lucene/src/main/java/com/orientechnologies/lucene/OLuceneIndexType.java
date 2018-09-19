@@ -28,33 +28,41 @@ import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.*;
 
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Created by enricorisa on 21/03/14.
  */
 public class OLuceneIndexType {
 
-  public static Field createField(String fieldName, Object value, Field.Store store, Field.Index analyzed) {
+  public static Field createField(String fieldName, Object value, Field.Store store) {
 
     if (value instanceof Number) {
       Number number = (Number) value;
-      if (value instanceof Long)
+      if (value instanceof Long) {
         return new LongField(fieldName, number.longValue(), store);
-      else if (value instanceof Float)
+      } else if (value instanceof Float) {
         return new FloatField(fieldName, number.floatValue(), store);
-      else if (value instanceof Double)
+      } else if (value instanceof Double) {
         return new DoubleField(fieldName, number.doubleValue(), store);
-
+      }
       return new IntField(fieldName, number.intValue(), store);
-
     } else if (value instanceof Date) {
       return new LongField(fieldName, ((Date) value).getTime(), store);
     }
-    return new Field(fieldName, value.toString(), store, analyzed);
+
+    if (fieldName.equalsIgnoreCase(OLuceneIndexEngineAbstract.RID)) {
+      StringField ridField = new StringField(fieldName, value.toString(), store);
+      return ridField;
+    }
+
+    //metadata fileds: _CLASS, _CLUSTER
+    if (fieldName.startsWith("_")) {
+      StringField ridField = new StringField(fieldName, value.toString(), store);
+      return ridField;
+    }
+
+    return new TextField(fieldName, value.toString(), store);
 
   }
 
@@ -86,15 +94,11 @@ public class OLuceneIndexType {
     return query;
   }
 
-  public static Query createQueryId(OIdentifiable value) {
-    return new TermQuery(new Term(OLuceneIndexEngineAbstract.RID, value.getIdentity().toString()));
-  }
-
   public static Query createDeleteQuery(OIdentifiable value, List<String> fields, Object key) {
 
     final BooleanQuery.Builder queryBuilder = new BooleanQuery.Builder();
-    queryBuilder.add(new TermQuery(new Term(OLuceneIndexEngineAbstract.RID, value.getIdentity().toString())),
-        BooleanClause.Occur.MUST);
+
+    queryBuilder.add(createQueryId(value), BooleanClause.Occur.MUST);
 
     Map<String, String> values = new HashMap<String, String>();
     // TODO Implementation of Composite keys with Collection
@@ -104,9 +108,13 @@ public class OLuceneIndexType {
       values.put(fields.iterator().next(), key.toString());
     }
     for (String s : values.keySet()) {
-      queryBuilder.add(new TermQuery(new Term(s + OLuceneIndexEngineAbstract.STORED, values.get(s))), BooleanClause.Occur.MUST);
+      queryBuilder.add(new TermQuery(new Term(s, values.get(s).toLowerCase(Locale.ENGLISH))), BooleanClause.Occur.MUST);
     }
     return queryBuilder.build();
+  }
+
+  public static Query createQueryId(OIdentifiable value) {
+    return new TermQuery(new Term(OLuceneIndexEngineAbstract.RID, value.getIdentity().toString()));
   }
 
   public static Query createFullQuery(OIndexDefinition index, Object key, Analyzer analyzer) throws ParseException {

@@ -28,17 +28,17 @@ import com.orientechnologies.orient.server.config.OServerUserConfiguration;
 import com.orientechnologies.orient.server.security.OSecurityAuthenticatorAbstract;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Provides a default password authenticator.
- * 
+ *
  * @author S. Colin Leister
- * 
  */
 public class ODefaultPasswordAuthenticator extends OSecurityAuthenticatorAbstract {
   // Holds a map of the users specified in the security.json file.
-  private ConcurrentHashMap<String, OServerUserConfiguration> usersMap = new ConcurrentHashMap<String, OServerUserConfiguration>();
+  private final ConcurrentHashMap<String, OServerUserConfiguration> usersMap = new ConcurrentHashMap<String, OServerUserConfiguration>();
 
   // OSecurityComponent
   // Called once the Server is running.
@@ -55,31 +55,40 @@ public class ODefaultPasswordAuthenticator extends OSecurityAuthenticatorAbstrac
         List<ODocument> usersList = jsonConfig.field("users");
 
         for (ODocument userDoc : usersList) {
-          if (userDoc.containsField("username") && userDoc.containsField("resources")) {
-            final String user = userDoc.field("username");
-            final String resources = userDoc.field("resources");
-            String password = userDoc.field("password");
 
-            String checkName = user;
+          OServerUserConfiguration userCfg = createServerUser(userDoc);
+
+          if (userCfg != null) {
+            String checkName = userCfg.name;
 
             if (!isCaseSensitive())
-              checkName = user.toLowerCase();
+              checkName = checkName.toLowerCase(Locale.ENGLISH);
 
-            if (!usersMap.containsKey(checkName)) {
-              if (password == null)
-                password = "";
-
-              OServerUserConfiguration userCfg = new OServerUserConfiguration(user, password, resources);
-              usersMap.put(checkName, userCfg);
-            } else {
-              OLogManager.instance().error(this, "ODefaultPasswordAuthenticator.config() User: %s already exists", checkName);
-            }
+            usersMap.put(checkName, userCfg);
           }
         }
       }
     } catch (Exception ex) {
-      OLogManager.instance().error(this, "ODefaultPasswordAuthenticator.config() Exception: %s", ex.getMessage());
+      OLogManager.instance().error(this, "config() Exception: %s", ex.getMessage());
     }
+  }
+
+  // Derived implementations can override this method to provide new server user implementations.
+  protected OServerUserConfiguration createServerUser(final ODocument userDoc) {
+    OServerUserConfiguration userCfg = null;
+
+    if (userDoc.containsField("username") && userDoc.containsField("resources")) {
+      final String user = userDoc.field("username");
+      final String resources = userDoc.field("resources");
+      String password = userDoc.field("password");
+
+      if (password == null)
+        password = "";
+
+      userCfg = new OServerUserConfiguration(user, password, resources);
+    }
+
+    return userCfg;
   }
 
   // OSecurityComponent
@@ -87,7 +96,6 @@ public class ODefaultPasswordAuthenticator extends OSecurityAuthenticatorAbstrac
   public void dispose() {
     synchronized (usersMap) {
       usersMap.clear();
-      usersMap = null;
     }
   }
 
@@ -99,7 +107,7 @@ public class ODefaultPasswordAuthenticator extends OSecurityAuthenticatorAbstrac
     try {
       OServerUserConfiguration user = getUser(username);
 
-      if (user != null && user.password != null && !user.password.isEmpty()) {
+      if (isPasswordValid(user)) {
         if (OSecurityManager.instance().checkPassword(password, user.password)) {
           principal = user.name;
         }
@@ -144,7 +152,7 @@ public class ODefaultPasswordAuthenticator extends OSecurityAuthenticatorAbstrac
         String checkName = username;
 
         if (!isCaseSensitive())
-          checkName = username.toLowerCase();
+          checkName = username.toLowerCase(Locale.ENGLISH);
 
         if (usersMap.containsKey(checkName)) {
           userCfg = usersMap.get(checkName);

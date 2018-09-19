@@ -23,11 +23,7 @@ import com.orientechnologies.common.concur.resource.OPartitionedObjectPool;
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.common.parser.OStringParser;
 import com.orientechnologies.orient.core.command.OCommandContext;
-import com.orientechnologies.orient.core.command.script.formatter.OGroovyScriptFormatter;
-import com.orientechnologies.orient.core.command.script.formatter.OJSScriptFormatter;
-import com.orientechnologies.orient.core.command.script.formatter.ORubyScriptFormatter;
-import com.orientechnologies.orient.core.command.script.formatter.OSQLScriptFormatter;
-import com.orientechnologies.orient.core.command.script.formatter.OScriptFormatter;
+import com.orientechnologies.orient.core.command.script.formatter.*;
 import com.orientechnologies.orient.core.db.ODatabase;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.exception.OConfigurationException;
@@ -36,38 +32,27 @@ import com.orientechnologies.orient.core.metadata.function.OFunctionUtilWrapper;
 import com.orientechnologies.orient.core.sql.OSQLScriptEngine;
 import com.orientechnologies.orient.core.sql.OSQLScriptEngineFactory;
 
-import javax.script.Bindings;
-import javax.script.ScriptEngine;
-import javax.script.ScriptEngineFactory;
-import javax.script.ScriptEngineManager;
-import javax.script.ScriptException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
+import javax.script.*;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Scanner;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Executes Script Commands.
- * 
- * @see OCommandScript
+ *
  * @author Luca Garulli
- * 
+ * @see OCommandScript
  */
 public class OScriptManager {
-  protected static final Object[]                             EMPTY_PARAMS       = new Object[] {};
-  protected static final int                                  LINES_AROUND_ERROR = 5;
-  protected final String                                      DEF_LANGUAGE       = "javascript";
-  protected String                                            defaultLanguage    = DEF_LANGUAGE;
-  protected ScriptEngineManager                               scriptEngineManager;
-  protected Map<String, ScriptEngineFactory>                  engines            = new HashMap<String, ScriptEngineFactory>();
-  protected Map<String, OScriptFormatter>                     formatters         = new HashMap<String, OScriptFormatter>();
-  protected List<OScriptInjection>                            injections         = new ArrayList<OScriptInjection>();
-  protected ConcurrentHashMap<String, ODatabaseScriptManager> dbManagers         = new ConcurrentHashMap<String, ODatabaseScriptManager>();
+  protected static final Object[] EMPTY_PARAMS       = new Object[] {};
+  protected static final int      LINES_AROUND_ERROR = 5;
+  protected final        String   DEF_LANGUAGE       = "javascript";
+  protected              String   defaultLanguage    = DEF_LANGUAGE;
+  protected ScriptEngineManager scriptEngineManager;
+  protected Map<String, ScriptEngineFactory>                  engines    = new HashMap<String, ScriptEngineFactory>();
+  protected Map<String, OScriptFormatter>                     formatters = new HashMap<String, OScriptFormatter>();
+  protected List<OScriptInjection>                            injections = new ArrayList<OScriptInjection>();
+  protected ConcurrentHashMap<String, ODatabaseScriptManager> dbManagers = new ConcurrentHashMap<String, ODatabaseScriptManager>();
 
   public OScriptManager() {
     scriptEngineManager = new ScriptEngineManager();
@@ -75,7 +60,7 @@ public class OScriptManager {
     registerEngine(OSQLScriptEngine.NAME, new OSQLScriptEngineFactory());
 
     for (ScriptEngineFactory f : scriptEngineManager.getEngineFactories()) {
-      registerEngine(f.getLanguageName().toLowerCase(), f);
+      registerEngine(f.getLanguageName().toLowerCase(Locale.ENGLISH), f);
 
       if (defaultLanguage == null)
         defaultLanguage = f.getLanguageName();
@@ -99,7 +84,7 @@ public class OScriptManager {
   }
 
   public String getFunctionDefinition(final OFunction iFunction) {
-    final OScriptFormatter formatter = formatters.get(iFunction.getLanguage().toLowerCase());
+    final OScriptFormatter formatter = formatters.get(iFunction.getLanguage().toLowerCase(Locale.ENGLISH));
     if (formatter == null)
       throw new IllegalArgumentException("Cannot find script formatter for the language '" + iFunction.getLanguage() + "'");
 
@@ -107,7 +92,7 @@ public class OScriptManager {
   }
 
   public String getFunctionInvoke(final OFunction iFunction, final Object[] iArgs) {
-    final OScriptFormatter formatter = formatters.get(iFunction.getLanguage().toLowerCase());
+    final OScriptFormatter formatter = formatters.get(iFunction.getLanguage().toLowerCase(Locale.ENGLISH));
     if (formatter == null)
       throw new IllegalArgumentException("Cannot find script formatter for the language '" + iFunction.getLanguage() + "'");
 
@@ -116,11 +101,10 @@ public class OScriptManager {
 
   /**
    * Formats the library of functions for a language.
-   * 
-   * @param db
-   *          Current database instance
-   * @param iLanguage
-   *          Language as filter
+   *
+   * @param db        Current database instance
+   * @param iLanguage Language as filter
+   *
    * @return String containing all the functions
    */
   public String getLibrary(final ODatabase<?> db, final String iLanguage) {
@@ -153,7 +137,7 @@ public class OScriptManager {
     if (iLanguage == null)
       return false;
 
-    iLanguage = iLanguage.toLowerCase();
+    iLanguage = iLanguage.toLowerCase(Locale.ENGLISH);
     return engines.containsKey(iLanguage);
   }
 
@@ -161,12 +145,12 @@ public class OScriptManager {
     if (iLanguage == null)
       throw new OCommandScriptException("No language was specified");
 
-    final String lang = iLanguage.toLowerCase();
+    final String lang = iLanguage.toLowerCase(Locale.ENGLISH);
 
     final ScriptEngineFactory scriptEngineFactory = engines.get(lang);
     if (scriptEngineFactory == null)
-      throw new OCommandScriptException("Unsupported language: " + iLanguage + ". Supported languages are: "
-          + getSupportedLanguages());
+      throw new OCommandScriptException(
+          "Unsupported language: " + iLanguage + ". Supported languages are: " + getSupportedLanguages());
 
     return scriptEngineFactory.getScriptEngine();
   }
@@ -174,12 +158,12 @@ public class OScriptManager {
   /**
    * Acquires a database engine from the pool. Once finished using it, the instance MUST be returned in the pool by calling the
    * method #releaseDatabaseEngine(String, ScriptEngine).
-   * 
-   * @param databaseName
-   *          Database name
-   * @param language
-   *          Script language
+   *
+   * @param databaseName Database name
+   * @param language     Script language
+   *
    * @return ScriptEngine instance with the function library already parsed
+   *
    * @see #releaseDatabaseEngine(String, String, OPartitionedObjectPool.PoolEntry)
    */
   public OPartitionedObjectPool.PoolEntry<ScriptEngine> acquireDatabaseEngine(final String databaseName, final String language) {
@@ -188,9 +172,11 @@ public class OScriptManager {
       // CREATE A NEW DATABASE SCRIPT MANAGER
       dbManager = new ODatabaseScriptManager(this, databaseName);
       final ODatabaseScriptManager prev = dbManagers.putIfAbsent(databaseName, dbManager);
-      if (prev != null)
+      if (prev != null) {
+        dbManager.close();
         // GET PREVIOUS ONE
         dbManager = prev;
+      }
     }
 
     return dbManager.acquireEngine(language);
@@ -200,21 +186,20 @@ public class OScriptManager {
    * Acquires a database engine from the pool. Once finished using it, the instance MUST be returned in the pool by calling the
    * method
    *
-   * @param iLanguage
-   *          Script language
-   * @param iDatabaseName
-   *          Database name
-   * @param poolEntry
-   *          Pool entry to free
+   * @param iLanguage     Script language
+   * @param iDatabaseName Database name
+   * @param poolEntry     Pool entry to free
+   *
    * @see #acquireDatabaseEngine(String, String)
    */
   public void releaseDatabaseEngine(final String iLanguage, final String iDatabaseName,
       final OPartitionedObjectPool.PoolEntry<ScriptEngine> poolEntry) {
     final ODatabaseScriptManager dbManager = dbManagers.get(iDatabaseName);
-    if (dbManager == null)
-      throw new IllegalArgumentException("Script pool for database '" + iDatabaseName + "' is not configured");
+    // We check if there is still a valid pool because it could be removed by the function reload
+    if (dbManager != null) {
+      dbManager.releaseEngine(iLanguage, poolEntry);
+    }
 
-    dbManager.releaseEngine(iLanguage, poolEntry);
   }
 
   public Iterable<String> getSupportedLanguages() {
@@ -271,8 +256,8 @@ public class OScriptManager {
     }
 
     if (errorLineNumber <= 0) {
-      throw new OCommandScriptException("Error on evaluation of the script library. Error: " + e.getMessage()
-          + "\nScript library was:\n" + lib);
+      throw new OCommandScriptException(
+          "Error on evaluation of the script library. Error: " + e.getMessage() + "\nScript library was:\n" + lib);
     } else {
       final StringBuilder code = new StringBuilder();
       final Scanner scanner = new Scanner(lib);
@@ -285,9 +270,9 @@ public class OScriptManager {
           currentLine = scanner.next();
           int pos = currentLine.indexOf("function");
           if (pos > -1) {
-            final String[] words = OStringParser.getWords(
-                currentLine.substring(Math.min(pos + "function".length() + 1, currentLine.length())), " \r\n\t");
-            if (words.length > 0 && words[0] != "(")
+            final String[] words = OStringParser
+                .getWords(currentLine.substring(Math.min(pos + "function".length() + 1, currentLine.length())), " \r\n\t");
+            if (words.length > 0 && "(".equals(words[0]))
               lastFunctionName = words[0];
           }
 
@@ -316,7 +301,7 @@ public class OScriptManager {
 
   /**
    * Unbinds variables
-   * 
+   *
    * @param binding
    */
   public void unbind(final Bindings binding, final OCommandContext iContext, final Map<Object, Object> iArgs) {
@@ -361,7 +346,7 @@ public class OScriptManager {
   }
 
   public OScriptManager registerFormatter(final String iLanguage, final OScriptFormatter iFormatterImpl) {
-    formatters.put(iLanguage.toLowerCase(), iFormatterImpl);
+    formatters.put(iLanguage.toLowerCase(Locale.ENGLISH), iFormatterImpl);
     return this;
   }
 
@@ -376,7 +361,7 @@ public class OScriptManager {
 
   /**
    * Closes the pool for a database. This is called at Orient shutdown and in case a function has been updated.
-   * 
+   *
    * @param iDatabaseName
    */
   public void close(final String iDatabaseName) {

@@ -22,8 +22,10 @@ package com.orientechnologies.orient.core.sql;
 import com.orientechnologies.orient.core.command.script.OCommandScript;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
+import org.junit.Assert;
 import org.testng.annotations.Test;
 
 import java.util.*;
@@ -431,9 +433,7 @@ public class OCommandExecutorSQLUpdateTest {
       db.command(new OCommandSQL("UPDATE cluster:foo set bar = {\"value\":\"foo\\\\\"}")).execute();
       Iterable result = db.query(new OSQLSynchQuery<Object>("select from cluster:foo"));
       ODocument doc = (ODocument) result.iterator().next();
-      assertEquals(((ODocument)doc.field("bar")).field("value"), "foo\\");
-
-
+      assertEquals(((ODocument) doc.field("bar")).field("value"), "foo\\");
 
     } finally {
       db.close();
@@ -457,7 +457,7 @@ public class OCommandExecutorSQLUpdateTest {
       Iterator iterator = result.iterator();
       assertTrue(iterator.hasNext());
       ODocument doc = (ODocument) iterator.next();
-      assertEquals(((ODocument)doc.field("bar")).field("value"), "foo\\");
+      assertEquals(((ODocument) doc.field("bar")).field("value"), "foo\\");
       assertFalse(iterator.hasNext());
 
       db.command(new OCommandSQL("insert into cluster:fooadditional1 set bar = {\"value\":\"zz\\\\\"}")).execute();
@@ -466,7 +466,7 @@ public class OCommandExecutorSQLUpdateTest {
       iterator = result.iterator();
       assertTrue(iterator.hasNext());
       doc = (ODocument) iterator.next();
-      assertEquals(((ODocument)doc.field("bar")).field("value"), "foo\\");
+      assertEquals(((ODocument) doc.field("bar")).field("value"), "foo\\");
       assertFalse(iterator.hasNext());
     } finally {
       db.close();
@@ -493,10 +493,10 @@ public class OCommandExecutorSQLUpdateTest {
       Iterator<?> iterator = result.iterator();
       assertTrue(iterator.hasNext());
       ODocument doc = (ODocument) iterator.next();
-      assertEquals(((ODocument)doc.field("bar")).field("value"), "foo\\");
+      assertEquals(((ODocument) doc.field("bar")).field("value"), "foo\\");
       assertTrue(iterator.hasNext());
       doc = (ODocument) iterator.next();
-      assertEquals(((ODocument)doc.field("bar")).field("value"), "foo\\");
+      assertEquals(((ODocument) doc.field("bar")).field("value"), "foo\\");
       assertFalse(iterator.hasNext());
     } finally {
       db.close();
@@ -549,4 +549,150 @@ public class OCommandExecutorSQLUpdateTest {
       db.close();
     }
   }
+
+  @Test
+  public void testUpdateObjectInLinkedList() throws Exception {
+    //issue #6729
+    final ODatabaseDocumentTx db = new ODatabaseDocumentTx("memory:OCommandExecutorSQLUpdateTest_testUpdateObjectInLinkedList");
+    db.create();
+    try {
+      db.command(new OCommandSQL("CREATE class testUpdateObjectInLinkedList")).execute();
+      db.command(new OCommandSQL("CREATE property testUpdateObjectInLinkedList.name String")).execute();
+      db.command(new OCommandSQL("CREATE class testUpdateObjectInLinkedList_sub")).execute();
+
+      db.command(new OCommandSQL("insert into testUpdateObjectInLinkedList (name) values('foo')")).execute();
+
+      db.command(new OCommandSQL(
+          "update testUpdateObjectInLinkedList add Devices = [{'@type': 'd','@class':'testUpdateObjectInLinkedList_sub', 'name': 'bar'}]"))
+          .execute();
+
+      List<ODocument> docs = db.query(new OSQLSynchQuery<ODocument>("select from testUpdateObjectInLinkedList_sub"));
+      assertEquals(1, docs.size());
+      ORID identity = docs.get(0).getIdentity();
+
+      db.getLocalCache().clear();
+
+      String update =
+          "update testUpdateObjectInLinkedList set name = 'baz', Devices = [{'@type': 'd'," + "'@rid': " + identity + ","
+              + "'@version':1," + "'@class': 'testUpdateObjectInLinkedList_sub'," + "'name': 'zzz'" + "}] where name = 'foo'";
+
+      db.command(new OCommandSQL(update)).execute();
+
+      List<ODocument> result = db.query(new OSQLSynchQuery<ODocument>("select from testUpdateObjectInLinkedList_sub"));
+
+      assertEquals(1, result.size());
+      assertEquals("zzz", result.get(0).field("name"));
+    } finally {
+      db.drop();
+    }
+  }
+
+  @Test
+  public void testUpdateAddOnNonExistingList1() throws Exception {
+    //issue #7194
+    final ODatabaseDocumentTx db = new ODatabaseDocumentTx("memory:testUpdateAddOnNonExistingList1");
+    db.create();
+    try {
+      db.command(new OCommandSQL("CREATE class Foo")).execute();
+      db.command(new OCommandSQL("insert into Foo set name = 'a'")).execute();
+
+      db.command(new OCommandSQL("update Foo add tags = 'foo'")).execute();
+      List<ODocument> result = db.query(new OSQLSynchQuery("SELECT FROM Foo"));
+
+      assertEquals(result.size(), 1);
+
+      ODocument doc = result.get(0);
+      List tags = doc.field("tags");
+      assertEquals(tags.size(), 1);
+      assertTrue(tags.contains("foo"));
+
+    } finally {
+      db.drop();
+    }
+  }
+
+  @Test
+  public void testUpdateAddOnNonExistingList2() throws Exception {
+    //issue #7194
+    final ODatabaseDocumentTx db = new ODatabaseDocumentTx("memory:testUpdateAddOnNonExistingList2");
+    db.create();
+    try {
+      db.command(new OCommandSQL("CREATE class Foo")).execute();
+      db.command(new OCommandSQL("CREATE property Foo.tags EMBEDDEDLIST")).execute();
+      db.command(new OCommandSQL("insert into Foo set name = 'a'")).execute();
+
+      db.command(new OCommandSQL("update Foo add tags = 'foo'")).execute();
+      List<ODocument> result = db.query(new OSQLSynchQuery("SELECT FROM Foo"));
+
+      assertEquals(result.size(), 1);
+
+      ODocument doc = result.get(0);
+      List tags = doc.field("tags");
+      assertEquals(tags.size(), 1);
+      assertTrue(tags.contains("foo"));
+
+    } finally {
+      db.drop();
+    }
+  }
+
+  @Test
+  public void testUpdateAddOnNonExistingSet() throws Exception {
+    //issue #7194
+    final ODatabaseDocumentTx db = new ODatabaseDocumentTx("memory:testUpdateAddOnNonExistingSet");
+    db.create();
+    try {
+      db.command(new OCommandSQL("CREATE class Foo")).execute();
+      db.command(new OCommandSQL("CREATE property Foo.tags EMBEDDEDSET")).execute();
+      db.command(new OCommandSQL("insert into Foo set name = 'a'")).execute();
+
+      db.command(new OCommandSQL("update Foo add tags = 'foo'")).execute();
+      List<ODocument> result = db.query(new OSQLSynchQuery("SELECT FROM Foo"));
+
+      assertEquals(result.size(), 1);
+
+      ODocument doc = result.get(0);
+      Set tags = doc.field("tags");
+      assertEquals(tags.size(), 1);
+      assertTrue(tags.contains("foo"));
+
+    } finally {
+      db.drop();
+    }
+  }
+
+  @Test
+  public void testUpdateWithTempRidInTx() throws Exception {
+    //issue #7194
+    final ODatabaseDocumentTx db = new ODatabaseDocumentTx("memory:testUpdateWithTempRidInTx");
+    db.create();
+    try {
+      db.command(new OCommandSQL("CREATE class Foo")).execute();
+
+      Object a = db.command(new OCommandSQL("insert into Foo set name = 'a'")).execute();
+      Assert.assertTrue(a instanceof ODocument);
+      db.begin();
+      Object b = db.command(new OCommandSQL("insert into Foo set name = 'b'")).execute();
+      Assert.assertTrue(b instanceof ODocument);
+      Assert.assertTrue(((ODocument) b).getIdentity().isTemporary());
+      db.command(new OCommandSQL("UPDATE " + ((ODocument) a).getIdentity() + "set link = " + ((ODocument) b).getIdentity()+" WHERE name = 'a'"))
+          .execute();
+
+      db.commit();
+
+      List<ODocument> result = db.query(new OSQLSynchQuery("SELECT FROM Foo WHERE name = 'a'"));
+
+      assertEquals(result.size(), 1);
+
+      ODocument doc = result.get(0);
+      Object link = doc.field("link");
+      Assert.assertTrue(link instanceof ODocument);
+      doc = (ODocument) link;
+      Assert.assertEquals("b", doc.field("name"));
+
+    } finally {
+      db.drop();
+    }
+  }
+
 }

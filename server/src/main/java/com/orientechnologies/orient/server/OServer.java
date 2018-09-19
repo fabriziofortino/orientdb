@@ -85,10 +85,12 @@ public class OServer {
   private static final String                              ROOT_PASSWORD_VAR      = "ORIENTDB_ROOT_PASSWORD";
   private static ThreadGroup                               threadGroup;
   private static Map<String, OServer>                      distributedServers     = new ConcurrentHashMap<String, OServer>();
-  private final CountDownLatch                             startupLatch           = new CountDownLatch(1);
+  private CountDownLatch                                   startupLatch;
+  private CountDownLatch                                   shutdownLatch;
   private final boolean                                    shutdownEngineOnExit;
   protected ReentrantLock                                  lock                   = new ReentrantLock();
   protected volatile boolean                               running                = false;
+  protected volatile boolean                               rejectRequests         = true;
   protected OServerConfigurationManager                    serverCfg;
   protected OContextConfiguration                          contextConfiguration;
   protected OServerShutdownHook                            shutdownHook;
@@ -191,8 +193,9 @@ public class OServer {
   public void restart() throws ClassNotFoundException, InvocationTargetException, InstantiationException, NoSuchMethodException,
       IllegalAccessException, IOException {
     try {
-      shutdown();
+      deinit();
     } finally {
+      Orient.instance().startup();
       startup(serverCfg.getConfiguration());
       activate();
     }
@@ -290,7 +293,13 @@ public class OServer {
 
     Orient.instance();
 
+    if (startupLatch == null)
+      startupLatch = new CountDownLatch(1);
+    if (shutdownLatch == null)
+      shutdownLatch = new CountDownLatch(1);
+
     clientConnectionManager = new OClientConnectionManager(this);
+    rejectRequests = false;
 
     initFromConfiguration();
 
@@ -429,6 +438,19 @@ public class OServer {
   }
 
   public boolean shutdown() {
+    try {
+      return deinit();
+    } finally {
+      startupLatch = null;
+
+      if (shutdownLatch != null) {
+        shutdownLatch.countDown();
+        shutdownLatch = null;
+      }
+    }
+  }
+
+  protected boolean deinit() {
     if (!running)
       return false;
 
@@ -459,6 +481,7 @@ public class OServer {
               OLogManager.instance().error(this, "Error during shutdown of listener %s.", e, l);
             }
           }
+
         }
 
         if (networkProtocols.size() > 0) {
@@ -474,14 +497,16 @@ public class OServer {
             OLogManager.instance().error(this, "Error during deactivation of server lifecycle listener %s", e, l);
           }
 
+        rejectRequests = true;
         clientConnectionManager.shutdown();
 
         if (pluginManager != null)
           pluginManager.shutdown();
 
-        if( serverSecurity != null  )
+        if (serverSecurity != null)
           serverSecurity.shutdown();
 
+        networkListeners.clear();
       } finally {
         lock.unlock();
       }
@@ -499,6 +524,18 @@ public class OServer {
     }
 
     return true;
+  }
+
+  public boolean rejectRequests() {
+    return rejectRequests;
+  }
+
+  public void waitForShutdown() {
+    try {
+      shutdownLatch.await();
+    } catch (InterruptedException e) {
+      OLogManager.instance().error(this, "Error during waiting for OrientDB shutdown", e);
+    }
   }
 
   public String getStoragePath(final String iName) {
@@ -791,13 +828,16 @@ public class OServer {
 
   @SuppressWarnings("unchecked")
   public <RET extends OServerPlugin> RET getPluginByClass(final Class<RET> iPluginClass) {
+    if (startupLatch == null)
+      throw new ODatabaseException("Error on plugin lookup: the server did not start correctly");
+
     try {
       startupLatch.await();
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     }
     if (!running)
-      throw new ODatabaseException("Error on plugin lookup the server didn't start correcty.");
+      throw new ODatabaseException("Error on plugin lookup the server did not start correctly.");
 
     for (OServerPluginInfo h : getPlugins())
       if (h.getInstance() != null && h.getInstance().getClass().equals(iPluginClass))
@@ -808,6 +848,9 @@ public class OServer {
 
   @SuppressWarnings("unchecked")
   public <RET extends OServerPlugin> RET getPlugin(final String iName) {
+    if (startupLatch == null)
+      throw new ODatabaseException("Error on plugin lookup: the server did not start correctly");
+
     try {
       startupLatch.await();
     } catch (InterruptedException e) {
@@ -1131,7 +1174,7 @@ public class OServer {
       } while (rootPassword != null);
 
     } else
-      OLogManager.instance().warn(this, "Found ORIENTDB_ROOT_PASSWORD variable, using this value as root's password", rootPassword);
+      OLogManager.instance().info(this, "Found ORIENTDB_ROOT_PASSWORD variable, using this value as root's password", rootPassword);
 
     if (!serverCfg.existsUser(OServerConfiguration.DEFAULT_ROOT_USER)) {
       addUser(OServerConfiguration.DEFAULT_ROOT_USER, rootPassword, "*");
@@ -1201,8 +1244,7 @@ public class OServer {
       }
 
       // START ALL THE CONFIGURED PLUGINS
-      for (OServerPlugin plugin : plugins)
-      {
+      for (OServerPlugin plugin : plugins) {
         pluginManager.callListenerBeforeStartup(plugin);
         plugin.startup();
         pluginManager.callListenerAfterStartup(plugin);

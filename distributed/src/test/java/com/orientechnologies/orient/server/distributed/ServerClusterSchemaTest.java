@@ -20,6 +20,7 @@
 
 package com.orientechnologies.orient.server.distributed;
 
+import com.orientechnologies.common.concur.ONeedRetryException;
 import junit.framework.Assert;
 
 import org.junit.Test;
@@ -36,7 +37,7 @@ import com.tinkerpop.blueprints.impls.orient.OrientVertexType;
  * Start 3 servers and wait for external commands
  */
 public class ServerClusterSchemaTest extends AbstractServerClusterTest {
-  final static int SERVERS = 3;
+  private final static int SERVERS = 3;
 
   public String getDatabaseName() {
     return "distributed-schema";
@@ -116,6 +117,8 @@ public class ServerClusterSchemaTest extends AbstractServerClusterTest {
             g.commit();
 
             Assert.assertTrue(false);
+          } catch (ONeedRetryException e) {
+            // EXPECTED
           } catch (OValidationException e) {
             // EXPECTED
           }

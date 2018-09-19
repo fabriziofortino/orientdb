@@ -1,18 +1,17 @@
 package com.orientechnologies.orient.jdbc;
 
+import com.orientechnologies.orient.core.id.ORecordId;
 import org.junit.Test;
 
 import java.math.BigDecimal;
-import java.sql.Date;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.Statement;
-import java.sql.Types;
+import java.sql.*;
 import java.util.Calendar;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.TimeZone;
 
-import static java.sql.Types.*;
-import static org.assertj.core.api.Assertions.*;
+import static java.sql.Types.BIGINT;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class OrientJdbcResultSetMetaDataTest extends OrientJdbcBaseTest {
 
@@ -97,23 +96,32 @@ public class OrientJdbcResultSetMetaDataTest extends OrientJdbcBaseTest {
 
     assertThat(conn.isClosed()).isFalse();
     Statement stmt = conn.createStatement();
-    ResultSet rs = stmt.executeQuery("SELECT stringKey, intKey, text, length, date FROM Item");
+    ResultSet rs = stmt.executeQuery("SELECT @rid, @class, stringKey, intKey, text, length, date FROM Item");
 
     rs.next();
     ResultSetMetaData metaData = rs.getMetaData();
-    assertThat(metaData.getColumnCount()).isEqualTo(5);
+    assertThat(metaData.getColumnCount()).isEqualTo(7);
 
-    assertThat(metaData.getColumnName(1)).isEqualTo("stringKey");
+    assertThat(metaData.getColumnName(1)).isEqualTo("rid");
+    assertThat(new ORecordId(rs.getString(1)).isPersistent()).isEqualTo(true);
+
     assertThat(rs.getObject(1)).isInstanceOf(String.class);
 
-    assertThat(metaData.getColumnName(2)).isEqualTo("intKey");
+    assertThat(metaData.getColumnName(2)).isEqualTo("class");
+    assertThat(rs.getString(2)).isEqualTo("Item");
+    assertThat(rs.getObject(2)).isInstanceOf(String.class);
 
-    assertThat(metaData.getColumnName(3)).isEqualTo("text");
+    assertThat(metaData.getColumnName(3)).isEqualTo("stringKey");
     assertThat(rs.getObject(3)).isInstanceOf(String.class);
 
-    assertThat(metaData.getColumnName(4)).isEqualTo("length");
+    assertThat(metaData.getColumnName(4)).isEqualTo("intKey");
 
-    assertThat(metaData.getColumnName(5)).isEqualTo("date");
+    assertThat(metaData.getColumnName(5)).isEqualTo("text");
+    assertThat(rs.getObject(5)).isInstanceOf(String.class);
+
+    assertThat(metaData.getColumnName(6)).isEqualTo("length");
+
+    assertThat(metaData.getColumnName(7)).isEqualTo("date");
 
   }
 
@@ -126,17 +134,48 @@ public class OrientJdbcResultSetMetaDataTest extends OrientJdbcBaseTest {
 
     ResultSetMetaData metaData = rs.getMetaData();
     while (rs.next()) {
-      if (rs.getMetaData().getColumnCount() == 6) {
-        //record with all attributes
-        assertThat(rs.getTimestamp("post_date")).isNotNull();
-        assertThat(rs.getTime("post_date")).isNotNull();
-        assertThat(rs.getDate("post_date")).isNotNull();
-      } else {
-        //record missing date; only 5 column
-        assertThat(rs.getTimestamp("post_date")).isNull();
-        assertThat(rs.getTime("post_date")).isNull();
-        assertThat(rs.getDate("post_date")).isNull();
+
+      while (rs.next()) {
+        int columnCount = rs.getMetaData().getColumnCount();
+
+        assertThat(columnCount).isEqualTo(6);
+
+        //map a record to a Map
+        Map<String, Object> record = new HashMap<String, Object>();
+        for (int i = 1; i <= columnCount; i++) {
+          record.put(rs.getMetaData().getColumnName(i), rs.getObject(i));
+        }
+
+        //all fields must be present even if with  null values
+        assertThat(record).containsKeys("uuid", "post_date", "post_uuid", "post_title", "post_content", "post_in_Writes");
+
       }
+
+    }
+  }
+
+  @Test
+  public void shouldMapMissingFieldsToNull2() throws Exception {
+    Statement stmt = conn.createStatement();
+
+    ResultSet rs = stmt.executeQuery(
+        "select writer_uuid, posts.uuid as post_uuid,  posts.date as post_date, posts.title as post_title  from (\n"
+            + " select uuid as writer_uuid, out('Writes') as posts from writer  unwind posts) order by writer_uuid");
+
+    while (rs.next()) {
+
+      int columnCount = rs.getMetaData().getColumnCount();
+
+      assertThat(columnCount).isEqualTo(4);
+
+      //map a record to a Map
+      Map<String, Object> record = new HashMap<String, Object>();
+      for (int i = 1; i <= columnCount; i++) {
+        record.put(rs.getMetaData().getColumnName(i), rs.getObject(i));
+      }
+
+      //all fields must be present even if with  null values
+      assertThat(record).containsKeys("writer_uuid", "post_uuid", "post_date", "post_title");
 
     }
   }
@@ -149,7 +188,7 @@ public class OrientJdbcResultSetMetaDataTest extends OrientJdbcBaseTest {
     conn.getInfo().setProperty("spark", "true");
     Statement stmt = conn.createStatement();
 
-    ResultSet rs = stmt.executeQuery("select * from (select * from item) where 1=0");
+    ResultSet rs = stmt.executeQuery("select * from (select * from item) WHERE 1=0");
 
     ResultSetMetaData metaData = rs.getMetaData();
 
@@ -157,5 +196,18 @@ public class OrientJdbcResultSetMetaDataTest extends OrientJdbcBaseTest {
     assertThat(metaData.getColumnTypeName(1)).isEqualTo("STRING");
     assertThat(rs.getObject(1)).isInstanceOf(String.class);
 
+  }
+
+  @Test
+  public void shouldReadBoolean() throws Exception {
+
+    Statement stmt = conn.createStatement();
+    ResultSet rs = stmt.executeQuery("SELECT  isActive, is_active FROM Writer");
+
+    while (rs.next()) {
+      assertThat(rs.getBoolean(1)).isTrue();
+      assertThat(rs.getBoolean(2)).isTrue();
+
+    }
   }
 }

@@ -18,20 +18,21 @@
 
 package com.orientechnologies.orient.graph.blueprints;
 
+import com.orientechnologies.orient.core.index.OCompositeKey;
 import com.orientechnologies.orient.core.index.OIndexException;
+import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.storage.ORecordDuplicatedException;
 import com.tinkerpop.blueprints.*;
 import com.tinkerpop.blueprints.impls.orient.*;
+import org.apache.commons.collections.IteratorUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
@@ -61,8 +62,8 @@ public class GraphTest {
     try {
       // System.out.println(g.getIndexedKeys(Vertex.class,true)); this will print VC1.p1
       if (g.getIndex("VC1.p1", Vertex.class) == null) {// this will return null. I do not know why
-        g.createKeyIndex("p1", Vertex.class, new Parameter<String, String>("class", "VC1"), new Parameter<String, String>("type",
-            "UNIQUE"), new Parameter<String, OType>("keytype", OType.STRING));
+        g.createKeyIndex("p1", Vertex.class, new Parameter<String, String>("class", "VC1"),
+            new Parameter<String, String>("type", "UNIQUE"), new Parameter<String, OType>("keytype", OType.STRING));
       }
     } catch (OIndexException e) {
       // ignore because the index may exist
@@ -101,8 +102,9 @@ public class GraphTest {
 
     vCollate.createProperty("name", OType.STRING);
 
-    g.createKeyIndex("name", Vertex.class, new Parameter<String, String>("class", "VCollate"), new Parameter<String, String>(
-        "type", "UNIQUE"), new Parameter<String, OType>("keytype", OType.STRING), new Parameter<String, String>("collate", "ci"));
+    g.createKeyIndex("name", Vertex.class, new Parameter<String, String>("class", "VCollate"),
+        new Parameter<String, String>("type", "UNIQUE"), new Parameter<String, OType>("keytype", OType.STRING),
+        new Parameter<String, String>("collate", "ci"));
     OrientVertex vertex = g.addVertex("class:VCollate", new Object[] { "name", "Enrico" });
 
     g.commit();
@@ -111,6 +113,41 @@ public class GraphTest {
 
     Assert.assertEquals(true, enrico.iterator().hasNext());
 
+  }
+
+  @Test
+  public void testGetCompositeKeyBySingleValue() {
+    OrientGraph g = new OrientGraph(URL, "admin", "admin");
+
+    OrientVertexType vComposite = g.createVertexType("VComposite");
+    vComposite.createProperty("login", OType.STRING);
+    vComposite.createProperty("permissions", OType.EMBEDDEDSET, OType.STRING);
+
+    vComposite.createIndex("VComposite_Login_Perm", OClass.INDEX_TYPE.UNIQUE, "login", "permissions");
+
+    String loginOne = "admin";
+    Set<String> permissionsOne = new HashSet<String>();
+    permissionsOne.add("perm1");
+    permissionsOne.add("perm2");
+
+    String loginTwo = "user";
+    Set<String> permissionsTwo = new HashSet<String>();
+    permissionsTwo.add("perm3");
+    permissionsTwo.add("perm4");
+
+    g.addVertex("class:VComposite", "login", loginOne, "permissions", permissionsOne);
+    g.commit();
+
+    g.addVertex("class:VComposite", "login", loginTwo, "permissions", permissionsTwo);
+    g.commit();
+
+    Iterable<Vertex> vertices = g.getVertices("VComposite", new String[] { "login" }, new String[] { "admin" });
+    Iterator<Vertex> verticesIterator = vertices.iterator();
+
+    Assert.assertTrue(verticesIterator.hasNext());
+    Vertex vertex = verticesIterator.next();
+    Assert.assertEquals(vertex.getProperty("login"), "admin");
+    Assert.assertEquals(vertex.getProperty("permissions"), permissionsOne);
   }
 
   @Test
@@ -267,7 +304,6 @@ public class GraphTest {
     }
   }
 
-
   @Test
   public void testCustomPredicate() {
     OrientGraphFactory orientGraphFactory = new OrientGraphFactory("memory:testCustomPredicate");
@@ -301,6 +337,33 @@ public class GraphTest {
   }
 
   @Test
+  public void testKebabCaseQuery() {
+    OrientGraphFactory orientGraphFactory = new OrientGraphFactory("memory:testKebabCase");
+    final OrientGraphNoTx g = orientGraphFactory.getNoTx();
+    try {
+      g.addVertex(null).setProperty("test-one", true);
+      g.addVertex(null).setProperty("test-one", false);
+
+      g.commit();
+
+      GraphQuery query = g.query();
+      query.has("test-one", true);
+
+      Iterable<Vertex> vertices = query.vertices();
+
+      final Iterator<Vertex> it = vertices.iterator();
+      Assert.assertTrue(it.hasNext());
+      Assert.assertTrue((Boolean) it.next().getProperty("test-one"));
+      Assert.assertFalse(it.hasNext());
+
+    } finally {
+      g.shutdown();
+      orientGraphFactory.close();
+    }
+
+  }
+
+  @Test
   public void testIndexCreateDropCreate() {
     OrientGraph g = new OrientGraph(URL, "admin", "admin");
     try {
@@ -309,6 +372,78 @@ public class GraphTest {
       g.createIndex("IndexCreateDropCreate", Vertex.class);
     } finally {
       g.shutdown();
+    }
+  }
+
+  @Test
+  public void testCompositeKey() {
+
+    OrientGraphNoTx graph = new OrientGraphNoTx("memory:testComposite");
+
+    try {
+      graph.createVertexType("Account");
+
+      graph.command(new OCommandSQL("create property account.description STRING")).execute();
+      graph.command(new OCommandSQL("create property account.namespace STRING")).execute();
+      graph.command(new OCommandSQL("create property account.name STRING")).execute();
+      graph.command(new OCommandSQL("create index account.composite on account (name, namespace) unique")).execute();
+
+      graph.addVertex("class:account", new Object[] { "name", "foo", "namespace", "bar", "description", "foobar" });
+      graph.addVertex("class:account", new Object[] { "name", "foo", "namespace", "baz", "description", "foobaz" });
+
+      Iterable<Vertex> vertices = graph.command(new OCommandSQL("select from index:account.composite where key = [ 'foo', 'baz' ]"))
+          .execute();
+
+      List list = IteratorUtils.toList(vertices.iterator());
+
+      Assert.assertEquals(1, list.size());
+
+      vertices = graph.getVertices("account.composite", new Object[] { "foo", "baz" });
+
+      list = IteratorUtils.toList(vertices.iterator());
+
+      Assert.assertEquals(1, list.size());
+
+      vertices = graph.getVertices("account.composite", new OCompositeKey("foo", "baz"));
+
+      list = IteratorUtils.toList(vertices.iterator());
+
+      Assert.assertEquals(1, list.size());
+
+      graph.getVertices("account.composite", new OCompositeKey("foo", "baz"));
+
+    } finally {
+      graph.drop();
+    }
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testCompositeExceptionKey() {
+
+    OrientGraphNoTx graph = new OrientGraphNoTx("memory:testComposite");
+
+    try {
+      graph.createVertexType("Account");
+
+      graph.command(new OCommandSQL("create property account.description STRING")).execute();
+      graph.command(new OCommandSQL("create property account.namespace STRING")).execute();
+      graph.command(new OCommandSQL("create property account.name STRING")).execute();
+      graph.command(new OCommandSQL("create index account.composite on account (name, namespace) unique")).execute();
+
+      graph.addVertex("class:account", new Object[] { "name", "foo", "namespace", "bar", "description", "foobar" });
+      graph.addVertex("class:account", new Object[] { "name", "foo", "namespace", "baz", "description", "foobaz" });
+
+      Iterable<Vertex> vertices = graph.command(new OCommandSQL("select from index:account.composite where key = [ 'foo', 'baz' ]"))
+          .execute();
+
+      List list = IteratorUtils.toList(vertices.iterator());
+
+      Assert.assertEquals(1, list.size());
+
+      graph.getVertices("account.composite", new Object[] { "foo", "baz", "bar" });
+
+    } finally {
+      graph.drop();
     }
   }
 }

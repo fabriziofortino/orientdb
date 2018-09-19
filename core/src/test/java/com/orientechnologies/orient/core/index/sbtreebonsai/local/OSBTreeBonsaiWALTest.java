@@ -260,7 +260,7 @@ public class OSBTreeBonsaiWALTest extends OSBTreeBonsaiLocalTest {
   }
 
   private void restoreDataFromWAL() throws IOException {
-    ODiskWriteAheadLog log = new ODiskWriteAheadLog(4, -1, 10 * 1024L * OWALPage.PAGE_SIZE,  null, true, actualStorage, 10);
+    ODiskWriteAheadLog log = new ODiskWriteAheadLog(4, -1, 10 * 1024L * OWALPage.PAGE_SIZE, null, true, actualStorage, 10);
     OLogSequenceNumber lsn = log.begin();
 
     List<OWALRecord> atomicUnit = new ArrayList<OWALRecord>();
@@ -295,13 +295,13 @@ public class OSBTreeBonsaiWALTest extends OSBTreeBonsaiLocalTest {
             final long fileId = updatePageRecord.getFileId();
             final long pageIndex = updatePageRecord.getPageIndex();
 
-            OCacheEntry cacheEntry = expectedReadCache.load(fileId, pageIndex, true, expectedWriteCache, 1);
+            OCacheEntry cacheEntry = expectedReadCache.load(fileId, pageIndex, true, expectedWriteCache, 1, false);
             if (cacheEntry == null) {
               do {
                 if (cacheEntry != null)
                   expectedReadCache.release(cacheEntry, expectedWriteCache);
 
-                cacheEntry = expectedReadCache.allocateNewPage(fileId, expectedWriteCache);
+                cacheEntry = expectedReadCache.allocateNewPage(fileId, expectedWriteCache, false);
               } while (cacheEntry.getPageIndex() != pageIndex);
             }
 

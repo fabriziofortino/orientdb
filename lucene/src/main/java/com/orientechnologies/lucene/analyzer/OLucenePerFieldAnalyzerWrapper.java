@@ -2,9 +2,12 @@ package com.orientechnologies.lucene.analyzer;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.DelegatingAnalyzerWrapper;
+import org.apache.lucene.analysis.core.KeywordAnalyzer;
 
 import java.util.HashMap;
 import java.util.Map;
+
+import static com.orientechnologies.lucene.engine.OLuceneIndexEngineAbstract.*;
 
 /**
  * Created by frank on 10/12/15.
@@ -20,7 +23,7 @@ public class OLucenePerFieldAnalyzerWrapper extends DelegatingAnalyzerWrapper {
    *          Any fields not specifically defined to use a different analyzer will use the one provided here.
    */
   public OLucenePerFieldAnalyzerWrapper(Analyzer defaultAnalyzer) {
-    this(defaultAnalyzer, null);
+    this(defaultAnalyzer, new HashMap<String, Analyzer>());
   }
 
   /**
@@ -36,9 +39,10 @@ public class OLucenePerFieldAnalyzerWrapper extends DelegatingAnalyzerWrapper {
     this.defaultAnalyzer = defaultAnalyzer;
     this.fieldAnalyzers = new HashMap<String, Analyzer>();
 
-    if (fieldAnalyzers != null && !fieldAnalyzers.isEmpty()) {
       this.fieldAnalyzers.putAll(fieldAnalyzers);
-    }
+
+    this.fieldAnalyzers.put(RID, new KeywordAnalyzer());
+    this.fieldAnalyzers.put("_CLASS", new KeywordAnalyzer());
   }
 
   @Override
@@ -55,6 +59,15 @@ public class OLucenePerFieldAnalyzerWrapper extends DelegatingAnalyzerWrapper {
   public OLucenePerFieldAnalyzerWrapper add(String field, Analyzer analyzer) {
     fieldAnalyzers.put(field, analyzer);
     return this;
+  }
+
+  public OLucenePerFieldAnalyzerWrapper add(OLucenePerFieldAnalyzerWrapper analyzer) {
+    fieldAnalyzers.putAll(analyzer.getAnalyzers());
+    return this;
+  }
+
+  protected Map<String, Analyzer> getAnalyzers() {
+    return fieldAnalyzers;
   }
 
   public OLucenePerFieldAnalyzerWrapper remove(String field) {

@@ -22,6 +22,7 @@ package com.orientechnologies.orient.graph.stresstest;
 import com.orientechnologies.common.concur.ONeedRetryException;
 import com.orientechnologies.common.util.OCallable;
 import com.orientechnologies.orient.client.remote.OStorageRemote;
+import com.orientechnologies.orient.core.exception.OSchemaException;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
@@ -29,8 +30,10 @@ import com.orientechnologies.orient.stresstest.ODatabaseIdentifier;
 import com.orientechnologies.orient.stresstest.OStressTesterSettings;
 import com.tinkerpop.blueprints.impls.orient.OrientBaseGraph;
 import com.tinkerpop.blueprints.impls.orient.OrientVertex;
+import com.tinkerpop.blueprints.impls.orient.OrientVertexType;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Random;
 
 /**
@@ -43,12 +46,12 @@ public class OGraphInsertWorkload extends OBaseGraphWorkload {
     LAST, RANDOM, SUPERNODE
   }
 
-  static final String     INVALID_FORM_MESSAGE = "GRAPH INSERT workload must be in form of <vertices>F<connection-factor>.";
+  static final String INVALID_FORM_MESSAGE = "GRAPH INSERT workload must be in form of <vertices>F<connection-factor>.";
 
-  private int             factor               = 80;
-  private OWorkLoadResult resultVertices       = new OWorkLoadResult();
-  private OWorkLoadResult resultEdges          = new OWorkLoadResult();
-  private STRATEGIES      strategy             = STRATEGIES.LAST;
+  private int             factor         = 80;
+  private OWorkLoadResult resultVertices = new OWorkLoadResult();
+  private OWorkLoadResult resultEdges    = new OWorkLoadResult();
+  private STRATEGIES      strategy       = STRATEGIES.LAST;
 
   public OGraphInsertWorkload() {
     connectionStrategy = OStorageRemote.CONNECTION_STRATEGY.ROUND_ROBIN_REQUEST;
@@ -60,8 +63,25 @@ public class OGraphInsertWorkload extends OBaseGraphWorkload {
   }
 
   @Override
+  protected void init(OBaseWorkLoadContext context) {
+    synchronized (getClass()) {
+      final OrientBaseGraph g = ((OWorkLoadContext) context).graph;
+      if (g.getVertexType(className) == null) {
+        try {
+          final OrientVertexType c = g.createVertexType(className);
+          c.createProperty("_id", OType.LONG);
+          c.createProperty("ts", OType.DATETIME);
+
+        } catch (OSchemaException e) {
+          // IGNORE IT, ALREADY CREATED
+        }
+      }
+    }
+  }
+
+  @Override
   public void parseParameters(final String args) {
-    final String ops = args.toUpperCase();
+    final String ops = args.toUpperCase(Locale.ENGLISH);
     char state = ' ';
     final StringBuilder value = new StringBuilder();
 
@@ -84,14 +104,17 @@ public class OGraphInsertWorkload extends OBaseGraphWorkload {
 
   @Override
   public void execute(final OStressTesterSettings settings, final ODatabaseIdentifier databaseIdentifier) {
-    final List<OBaseWorkLoadContext> contexts = executeOperation(databaseIdentifier, resultVertices, settings.concurrencyLevel,
-        settings.operationsPerTransaction, new OCallable<Void, OBaseWorkLoadContext>() {
+    connectionStrategy = settings.loadBalancing;
+
+    final List<OBaseWorkLoadContext> contexts = executeOperation(databaseIdentifier, resultVertices, settings,
+        new OCallable<Void, OBaseWorkLoadContext>() {
           @Override
           public Void call(final OBaseWorkLoadContext context) {
             final OWorkLoadContext graphContext = ((OWorkLoadContext) context);
             final OrientBaseGraph graph = graphContext.graph;
 
-            final OrientVertex v = graph.addVertex(null, "_id", resultVertices.current.get());
+            final OrientVertex v = graph
+                .addVertex("class:" + className, "_id", resultVertices.current.get(), "ts", System.currentTimeMillis());
 
             if (graphContext.lastVertexToConnect != null) {
               v.addEdge("E", graphContext.lastVertexToConnect);
@@ -133,8 +156,8 @@ public class OGraphInsertWorkload extends OBaseGraphWorkload {
           }
         });
 
-    final OrientBaseGraph graph = settings.operationsPerTransaction > 0 ? getGraph(databaseIdentifier)
-        : getGraphNoTx(databaseIdentifier);
+    final OrientBaseGraph graph =
+        settings.operationsPerTransaction > 0 ? getGraph(databaseIdentifier) : getGraphNoTx(databaseIdentifier);
     try {
       // CONNECTED ALL THE SUB GRAPHS
       OrientVertex lastVertex = null;
@@ -146,8 +169,11 @@ public class OGraphInsertWorkload extends OBaseGraphWorkload {
 
             lastVertex = ((OWorkLoadContext) context).lastVertexToConnect;
           } catch (ONeedRetryException e) {
-            lastVertex.reload();
-            ((OWorkLoadContext) context).lastVertexToConnect.reload();
+            if (lastVertex.getIdentity().isPersistent())
+              lastVertex.reload();
+
+            if (((OWorkLoadContext) context).lastVertexToConnect.getIdentity().isPersistent())
+              ((OWorkLoadContext) context).lastVertexToConnect.reload();
           }
       }
     } finally {
@@ -156,22 +182,24 @@ public class OGraphInsertWorkload extends OBaseGraphWorkload {
   }
 
   protected void manageNeedRetryException(OBaseWorkLoadContext context, ONeedRetryException e) {
-    ((OWorkLoadContext) context).lastVertexToConnect.reload();
+    if (((OWorkLoadContext) context).lastVertexToConnect.getIdentity().isPersistent())
+      ((OWorkLoadContext) context).lastVertexToConnect.reload();
   }
 
   @Override
   public String getPartialResult() {
-    return String.format("%d%% [Vertices: %d - Edges: %d (conflicts=%d)]",
-        ((100 * resultVertices.current.get() / resultVertices.total)), resultVertices.current.get(), resultEdges.current.get(),
-        resultVertices.conflicts.get());
+    return String
+        .format("%d%% [Vertices: %d - Edges: %d (conflicts=%d)]", ((100 * resultVertices.current.get() / resultVertices.total)),
+            resultVertices.current.get(), resultEdges.current.get(), resultVertices.conflicts.get());
   }
 
   @Override
   public String getFinalResult() {
     final StringBuilder buffer = new StringBuilder(getErrors());
 
-    buffer.append(String.format("- Created %d vertices and %d edges in %.3f secs", resultVertices.current.get(),
-        resultEdges.current.get(), resultVertices.totalTime / 1000f));
+    buffer.append(String
+        .format("- Created %d vertices and %d edges in %.3f secs", resultVertices.current.get(), resultEdges.current.get(),
+            resultVertices.totalTime / 1000f));
 
     buffer.append(resultVertices.toOutput(1));
 
@@ -199,7 +227,7 @@ public class OGraphInsertWorkload extends OBaseGraphWorkload {
     else if (state == 'F')
       factor = Integer.parseInt(number.toString());
     else if (state == 'S')
-      strategy = STRATEGIES.valueOf(number.toString().toUpperCase());
+      strategy = STRATEGIES.valueOf(number.toString().toUpperCase(Locale.ENGLISH));
 
     number.setLength(0);
     return c;

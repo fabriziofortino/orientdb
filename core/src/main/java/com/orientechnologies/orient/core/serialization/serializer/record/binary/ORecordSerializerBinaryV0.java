@@ -257,6 +257,8 @@ public class ORecordSerializerBinaryV0 implements ODocumentSerializer {
       } else {
         // LOAD GLOBAL PROPERTY BY ID
         prop = getGlobalProperty(document, len);
+        if (prop == null)
+          throw new OSerializationException("Missing property definition for property id '" + ((len * -1) - 1) + "'");
         fieldName = prop.getName();
         valuePos = readInteger(bytes);
         if (prop.getType() != OType.ANY)
@@ -288,15 +290,12 @@ public class ORecordSerializerBinaryV0 implements ODocumentSerializer {
   }
 
   @Override
-  public String[] getFieldNames(final BytesContainer bytes) {
+  public String[] getFieldNames(ODocument reference, final BytesContainer bytes) {
     // SKIP CLASS NAME
     final int classNameLen = OVarIntSerializer.readAsInteger(bytes);
     bytes.skip(classNameLen);
 
     final List<String> result = new ArrayList<String>();
-
-    final OMetadataInternal metadata = (OMetadataInternal) ODatabaseRecordThreadLocal.INSTANCE.get().getMetadata();
-    final OImmutableSchema _schema = metadata.getImmutableSchemaSnapshot();
 
     String fieldName;
     while (true) {
@@ -315,7 +314,10 @@ public class ORecordSerializerBinaryV0 implements ODocumentSerializer {
       } else {
         // LOAD GLOBAL PROPERTY BY ID
         final int id = (len * -1) - 1;
-        prop = _schema.getGlobalPropertyById(id);
+        prop = ODocumentInternal.getGlobalPropertyById(reference, id);
+        if (prop == null) {
+          throw new OSerializationException("Missing property definition for property id '" + id + "'");
+        }
         result.add(prop.getName());
 
         // SKIP THE REST
@@ -349,8 +351,11 @@ public class ORecordSerializerBinaryV0 implements ODocumentSerializer {
       ODocumentEntry docEntry = entry.getValue();
       if (!docEntry.exist())
         continue;
-      if (docEntry.property == null && props != null)
-        docEntry.property = props.get(entry.getKey());
+      if (docEntry.property == null && props != null) {
+        OProperty prop = props.get(entry.getKey());
+        if (prop != null && docEntry.type == prop.getType())
+          docEntry.property = prop;
+      }
 
       if (docEntry.property != null) {
         OVarIntSerializer.write(bytes, (docEntry.property.getId() + 1) * -1);
@@ -383,6 +388,7 @@ public class ORecordSerializerBinaryV0 implements ODocumentSerializer {
           writeOType(bytes, (pos[i] + OIntegerSerializer.INT_SIZE), type);
       }
     }
+
   }
 
   @Override
@@ -854,10 +860,10 @@ public class ORecordSerializerBinaryV0 implements ODocumentSerializer {
         if (real != null)
           link = real;
       } catch (ORecordNotFoundException ex) {
-        //IGNORE IT WILL FAIL THE ASSERT IN CASE
+        // IGNORE IT WILL FAIL THE ASSERT IN CASE
       }
     }
-    if(link.getIdentity().getClusterId() < 0 && ORecordSerializationContext.getContext() != null )
+    if (link.getIdentity().getClusterId() < 0 && ORecordSerializationContext.getContext() != null)
       throw new ODatabaseException("Impossible to serialize invalid link " + link.getIdentity());
 
     final int pos = OVarIntSerializer.write(bytes, link.getIdentity().getClusterId());
@@ -912,7 +918,7 @@ public class ORecordSerializerBinaryV0 implements ODocumentSerializer {
         serializeValue(bytes, itemValue, type, null);
       } else {
         throw new OSerializationException(
-            "Impossible serialize value of type " + value.getClass() + " with the ODocument binary serializer");
+            "Impossible serialize value of type " + itemValue.getClass() + " with the ODocument binary serializer");
       }
     }
     return pos;

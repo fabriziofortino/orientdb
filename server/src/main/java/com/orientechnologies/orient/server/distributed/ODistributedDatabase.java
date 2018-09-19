@@ -20,8 +20,11 @@
 package com.orientechnologies.orient.server.distributed;
 
 import com.orientechnologies.common.util.OCallable;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.storage.ORawBuffer;
 import com.orientechnologies.orient.core.storage.impl.local.paginated.wal.OLogSequenceNumber;
 
 import java.io.IOException;
@@ -31,7 +34,6 @@ import java.util.Collection;
  * Generic Distributed Database interface.
  *
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
- *
  */
 public interface ODistributedDatabase {
 
@@ -39,46 +41,67 @@ public interface ODistributedDatabase {
 
   ODistributedResponse send2Nodes(ODistributedRequest iRequest, Collection<String> iClusterNames, Collection<String> iNodes,
       ODistributedRequest.EXECUTION_MODE iExecutionMode, Object localResult,
-      OCallable<Void, ODistributedRequestId> iAfterSentCallback);
+      OCallable<Void, ODistributedRequestId> iAfterSentCallback, OCallable<Void, ODistributedResponseManager> endCallback);
 
   void setOnline();
+
+  /**
+   * Returns the locked record for read-only purpose. This avoid to have dirty reads until the transaction is fully committed.
+   *
+   * @param iRecord record to load.
+   *
+   * @return The record if it is locked, otherwise null.
+   */
+  ORawBuffer getRecordIfLocked(ORID iRecord);
 
   /**
    * Locks the record to be sure distributed transactions never work concurrently against the same records in the meanwhile the
    * transaction is executed and the OCompleteTxTask is not arrived.
    *
-   * @param iRecord
-   *          Record to lock
-   * @param iRequestId
-   *          Request id
-   * @param timeout
-   *          Timeout in ms to wait for the lock
-   * @throws com.orientechnologies.orient.server.distributed.task.ODistributedRecordLockedException
-   *           if the record wasn't locked
+   * @param record    Record to lock
+   * @param requestId Request id
+   * @param timeout   Timeout in ms to wait for the lock
+   *
+   * @throws com.orientechnologies.orient.server.distributed.task.ODistributedRecordLockedException if the record wasn't locked
    * @see #unlockRecord(OIdentifiable, ODistributedRequestId)
    */
-  boolean lockRecord(OIdentifiable iRecord, final ODistributedRequestId iRequestId, long timeout);
+  boolean lockRecord(ORID record, ODistributedRequestId requestId, long timeout);
 
   /**
    * Unlocks the record previously locked through #lockRecord method.
    *
-   * @param iRecord
-   * @param requestId
-   * @see #lockRecord(OIdentifiable, ODistributedRequestId, long)
+   * @param record    Record to unlock
+   * @param requestId Request id
+   *
+   * @see #lockRecord(ORID, ODistributedRequestId, long)
    */
-  void unlockRecord(OIdentifiable iRecord, ODistributedRequestId requestId);
+  void unlockRecord(OIdentifiable record, ODistributedRequestId requestId);
+
+  /**
+   * Force the locking of a record. If the record was previously locked by a transaction (context), then that transaction is
+   * canceled.
+   *
+   * @param record    Record to lock
+   * @param requestId Request id
+   */
+  boolean forceLockRecord(ORID record, ODistributedRequestId requestId);
+
+  String dump();
+
+  void unlockResourcesOfServer(ODatabaseDocumentInternal database, String serverName);
 
   /**
    * Unlocks all the record locked by node iNodeName
    *
-   * @param iNodeId
-   *          node id
+   * @param nodeName node id
    */
-  void handleUnreachableNode(int iNodeId);
+  void handleUnreachableNode(String nodeName);
 
   ODistributedSyncConfiguration getSyncConfiguration();
 
-  void processRequest(ODistributedRequest request);
+  void waitForOnline();
+
+  void processRequest(ODistributedRequest request, boolean waitForAcceptingRequests);
 
   ODistributedTxContext registerTxContext(ODistributedRequestId reqId);
 
@@ -92,9 +115,9 @@ public interface ODistributedDatabase {
 
   long getProcessedRequests();
 
-  void setLSN(String sourceNodeName, OLogSequenceNumber taskLastLSN) throws IOException;
+  void checkNodeInConfiguration(ODistributedConfiguration cfg, String serverName);
 
-  ODistributedDatabaseRepairer getDatabaseRapairer();
+  void setLSN(String sourceNodeName, OLogSequenceNumber taskLastLSN, boolean writeLastOperation) throws IOException;
 
-  void dumpLocks();
+  ODistributedDatabaseRepairer getDatabaseRepairer();
 }

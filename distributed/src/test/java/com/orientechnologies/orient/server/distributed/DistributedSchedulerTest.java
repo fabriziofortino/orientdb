@@ -20,6 +20,7 @@
 
 package com.orientechnologies.orient.server.distributed;
 
+import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.metadata.function.OFunction;
 import com.orientechnologies.orient.core.record.impl.ODocument;
@@ -46,8 +47,17 @@ public class DistributedSchedulerTest extends AbstractServerClusterTest {
 
   @Override
   protected void executeTest() throws Exception {
-//    eventByAPI();
+
+    waitForDatabaseIsOnline(0, serverInstance.get(1).getServerInstance().getDistributedManager().getLocalNodeName(),
+        getDatabaseName(), 20000);
+
+    waitForDatabaseIsOnline(1, serverInstance.get(0).getServerInstance().getDistributedManager().getLocalNodeName(),
+        getDatabaseName(), 20000);
+
+    eventByAPI();
     eventBySQL();
+
+    Thread.sleep(2000);
   }
 
   private void eventByAPI() throws InterruptedException {
@@ -63,7 +73,7 @@ public class DistributedSchedulerTest extends AbstractServerClusterTest {
 
     Long count = getLogCounter(db);
 
-    Assert.assertTrue(count >= 4 && count <= 5);
+    Assert.assertTrue("count = " + count, count > 0);
 
     db.getMetadata().getScheduler().removeEvent("test");
 
@@ -84,9 +94,11 @@ public class DistributedSchedulerTest extends AbstractServerClusterTest {
 
       long count = getLogCounter(db);
 
-      Assert.assertTrue(count >= 4);
+      Assert.assertTrue("count = " + count, count >= 4);
 
       db.getLocalCache().invalidate();
+
+      OLogManager.instance().info(this, "UPDATING EVENT FROM 1 TO 2 SECONDS...");
 
       // UPDATE
       db.command(new OCommandSQL("update oschedule set rule = \"0/2 * * * * ?\" where name = 'test'")).execute(func.getId());
@@ -95,7 +107,7 @@ public class DistributedSchedulerTest extends AbstractServerClusterTest {
 
       long newCount = getLogCounter(db);
 
-      Assert.assertTrue(newCount - count > 1 && newCount - count <= 2);
+      Assert.assertTrue("newCount = " + newCount + " count=" + count, newCount - count > 1 && newCount - count <= 2);
 
       // DELETE
       db.command(new OCommandSQL("delete from oschedule where name = 'test'")).execute(func.getId());
@@ -106,7 +118,7 @@ public class DistributedSchedulerTest extends AbstractServerClusterTest {
 
       newCount = getLogCounter(db);
 
-      Assert.assertTrue(newCount - count <= 1);
+      Assert.assertTrue("newCount = " + newCount, newCount - count <= 1);
 
     } finally {
       db.drop();

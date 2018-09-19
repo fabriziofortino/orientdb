@@ -35,6 +35,7 @@ import com.tinkerpop.blueprints.impls.orient.OrientVertex;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -67,7 +68,7 @@ public class OGraphShortestPathWorkload extends OBaseGraphWorkload {
     if (args == null)
       return;
 
-    final String ops = args.toUpperCase();
+    final String ops = args.toUpperCase(Locale.ENGLISH);
     char state = 'L';
     final StringBuilder number = new StringBuilder();
 
@@ -89,6 +90,8 @@ public class OGraphShortestPathWorkload extends OBaseGraphWorkload {
 
   @Override
   public void execute(final OStressTesterSettings settings, final ODatabaseIdentifier databaseIdentifier) {
+    connectionStrategy = settings.loadBalancing;
+
     // RETRIEVE THE STARTING VERTICES
     final OrientGraphNoTx g = getGraphNoTx(databaseIdentifier);
     try {
@@ -102,7 +105,7 @@ public class OGraphShortestPathWorkload extends OBaseGraphWorkload {
     }
     result.total = startingVertices.size();
 
-    executeOperation(databaseIdentifier, result, settings.concurrencyLevel, settings.operationsPerTransaction, new OCallable<Void, OBaseWorkLoadContext>() {
+    executeOperation(databaseIdentifier, result, settings, new OCallable<Void, OBaseWorkLoadContext>() {
       @Override
       public Void call(final OBaseWorkLoadContext context) {
         final OWorkLoadContext graphContext = ((OWorkLoadContext) context);

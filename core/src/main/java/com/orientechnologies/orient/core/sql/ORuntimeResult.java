@@ -64,8 +64,8 @@ public class ORuntimeResult {
   public static ODocument createProjectionDocument(final int iProgressive) {
     final ODocument doc = new ODocument().setOrdered(true).setTrackingChanges(false);
     // ASSIGN A TEMPORARY RID TO ALLOW PAGINATION IF ANY
-    ((ORecordId) doc.getIdentity()).clusterId = -2;
-    ((ORecordId) doc.getIdentity()).clusterPosition = iProgressive;
+    ((ORecordId) doc.getIdentity()).setClusterId(-2);
+    ((ORecordId) doc.getIdentity()).setClusterPosition(iProgressive);
     return doc;
   }
 
@@ -175,7 +175,7 @@ public class ORuntimeResult {
             }
 
             iValue.field(prjName, iteratorValues, link ? OType.LINKLIST : OType.EMBEDDEDLIST);
-          } else if (projectionValue instanceof ODocument && !((ODocument) projectionValue).getIdentity().isPersistent()) {
+          } else if (projectionValue instanceof ODocument && ((ODocument) projectionValue).getIdentity().getClusterId() < 0) {
             iValue.field(prjName, projectionValue, OType.EMBEDDED);
           } else if (projectionValue instanceof Set<?>) {
             OType type = OType.getTypeByValue(projectionValue);

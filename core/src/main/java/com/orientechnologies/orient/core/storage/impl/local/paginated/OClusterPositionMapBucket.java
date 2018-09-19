@@ -40,14 +40,14 @@ public class OClusterPositionMapBucket extends ODurablePage {
   private static final int POSITIONS_OFFSET = SIZE_OFFSET + OIntegerSerializer.INT_SIZE;
 
   // NEVER USED ON DISK
-  public static final byte NOT_EXISTENT     = 0;
-  public static final byte REMOVED          = 1;
-  public static final byte FILLED           = 2;
-  public static final byte ALLOCATED        = 4;
+  public static final byte NOT_EXISTENT = 0;
+  public static final byte REMOVED      = 1;
+  public static final byte FILLED       = 2;
+  public static final byte ALLOCATED    = 4;
 
-  public static final int  ENTRY_SIZE       = OByteSerializer.BYTE_SIZE + OIntegerSerializer.INT_SIZE + OLongSerializer.LONG_SIZE;
+  public static final int ENTRY_SIZE = OByteSerializer.BYTE_SIZE + OIntegerSerializer.INT_SIZE + OLongSerializer.LONG_SIZE;
 
-  public static final int  MAX_ENTRIES      = (MAX_PAGE_SIZE_BYTES - POSITIONS_OFFSET) / ENTRY_SIZE;
+  public static final int MAX_ENTRIES = (MAX_PAGE_SIZE_BYTES - POSITIONS_OFFSET) / ENTRY_SIZE;
 
   public OClusterPositionMapBucket(OCacheEntry cacheEntry, OWALChanges changes) {
     super(cacheEntry, changes);
@@ -88,6 +88,10 @@ public class OClusterPositionMapBucket extends ODurablePage {
       return null;
 
     int position = entryPosition(index);
+
+    if (getByteValue(position) == ALLOCATED)
+      return new PositionEntry(-1, -1);
+
     if (getByteValue(position) != FILLED)
       return null;
 
@@ -110,7 +114,7 @@ public class OClusterPositionMapBucket extends ODurablePage {
     updateEntry(position, entry);
   }
 
-  public void resurrect(final int index, final PositionEntry entry) throws IOException {
+  public void resurrect(final int index) throws IOException {
     final int size = getIntValue(SIZE_OFFSET);
 
     if (index >= size)
@@ -119,11 +123,9 @@ public class OClusterPositionMapBucket extends ODurablePage {
     final int position = entryPosition(index);
     final byte flag = getByteValue(position);
     if (flag == REMOVED)
-      setByteValue(position, FILLED);
+      setByteValue(position, ALLOCATED);
     else
       throw new OStorageException("Cannot resurrect a record: provided index " + index + " points to a non removed entry");
-
-    updateEntry(position, entry);
   }
 
   private int entryPosition(int index) {
@@ -146,7 +148,7 @@ public class OClusterPositionMapBucket extends ODurablePage {
 
     int position = entryPosition(index);
 
-    if (getByteValue(position) != FILLED)
+    if (getByteValue(position) != FILLED && getByteValue(position) != ALLOCATED)
       return null;
 
     setByteValue(position, REMOVED);
@@ -196,7 +198,7 @@ public class OClusterPositionMapBucket extends ODurablePage {
     private final long pageIndex;
     private final int  recordPosition;
 
-    public PositionEntry(final long pageIndex,final  int recordPosition) {
+    public PositionEntry(final long pageIndex, final int recordPosition) {
       this.pageIndex = pageIndex;
       this.recordPosition = recordPosition;
     }

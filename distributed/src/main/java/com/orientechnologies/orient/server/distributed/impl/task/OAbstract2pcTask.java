@@ -42,19 +42,27 @@ import java.util.List;
  * @author Luca Garulli (l.garulli--at--orientdb.com)
  */
 public abstract class OAbstract2pcTask extends OAbstractReplicatedTask {
-  protected static final long                   serialVersionUID  = 1L;
-  public static final String                    NON_LOCAL_CLUSTER = "_non_local_cluster";
+  protected static final long   serialVersionUID  = 1L;
+  public static final    String NON_LOCAL_CLUSTER = "_non_local_cluster";
 
-  protected List<OAbstractRecordReplicatedTask> tasks             = new ArrayList<OAbstractRecordReplicatedTask>();
+  protected final List<OAbstractRecordReplicatedTask> tasks = new ArrayList<OAbstractRecordReplicatedTask>();
 
-  protected transient List<OAbstractRemoteTask> localUndoTasks    = new ArrayList<OAbstractRemoteTask>();
-  protected transient OTxTaskResult             result;
+  protected transient List<OAbstractRemoteTask> localUndoTasks = new ArrayList<OAbstractRemoteTask>();
+  protected transient OTxTaskResult result;
 
   public OAbstract2pcTask() {
   }
 
   public void add(final OAbstractRecordReplicatedTask iTask) {
     tasks.add(iTask);
+  }
+
+  @Override
+  public boolean isIdempotent() {
+    for (OAbstractRecordReplicatedTask t : tasks)
+      if (t != null && !t.isIdempotent())
+        return false;
+    return true;
   }
 
   /**
@@ -66,7 +74,7 @@ public abstract class OAbstract2pcTask extends OAbstractReplicatedTask {
       // ONE TASK, USE THE INNER TASK'S PARTITION KEY
       return tasks.get(0).getPartitionKey();
 
-    // MULTIPLE PARTITION
+    // MULTIPLE PARTITIONS
     final int[] partitions = new int[tasks.size()];
     for (int i = 0; i < tasks.size(); ++i) {
       final OAbstractRecordReplicatedTask task = tasks.get(i);
@@ -91,25 +99,34 @@ public abstract class OAbstract2pcTask extends OAbstractReplicatedTask {
       return null;
     }
 
-    final OCompleted2pcTask fixTask = new OCompleted2pcTask(iRequest.getId(), false, null);
+    final OCompleted2pcTask fixTask = (OCompleted2pcTask) dManager.getTaskFactoryManager().getFactoryByServerName(executorNodeName)
+        .createTask(OCompleted2pcTask.FACTORYID);
+    fixTask.init(iRequest.getId(), false, getPartitionKey());
 
     for (int i = 0; i < tasks.size(); ++i) {
       final OAbstractRecordReplicatedTask t = tasks.get(i);
 
-      final Object badResult = iBadResponse instanceof Throwable ? iBadResponse : ((OTxTaskResult) iBadResponse).results.get(i);
+      final Object badResult = iBadResponse == null ?
+          null :
+          iBadResponse instanceof Throwable ? iBadResponse : ((OTxTaskResult) iBadResponse).results.get(i);
       final Object goodResult = ((OTxTaskResult) iGoodResponse).results.get(i);
 
       final ORemoteTask undoTask = t.getFixTask(iRequest, t, badResult, goodResult, executorNodeName, dManager);
-      if (undoTask != null)
-        fixTask.addFixTask(undoTask);
+      if (undoTask == null)
+        return null;
+
+      fixTask.addFixTask(undoTask);
     }
 
     return fixTask;
   }
 
   @Override
-  public ORemoteTask getUndoTask(final ODistributedRequestId reqId) {
-    final OCompleted2pcTask fixTask = new OCompleted2pcTask(reqId, false, null);
+  public ORemoteTask getUndoTask(ODistributedServerManager dManager, final ODistributedRequestId reqId,
+      final List<String> servers) {
+    final OCompleted2pcTask fixTask = (OCompleted2pcTask) dManager.getTaskFactoryManager().getFactoryByServerNames(servers)
+        .createTask(OCompleted2pcTask.FACTORYID);
+    fixTask.init(reqId, false, getPartitionKey());
 
     for (ORemoteTask undoTask : localUndoTasks)
       fixTask.addFixTask(undoTask);
@@ -171,12 +188,26 @@ public abstract class OAbstract2pcTask extends OAbstractReplicatedTask {
     this.localUndoTasks = undoTasks;
   }
 
-  @Override
-  public OLogSequenceNumber getLastLSN() {
-    return lastLSN;
-  }
-
   public void setLastLSN(final OLogSequenceNumber lastLSN) {
     this.lastLSN = lastLSN;
+  }
+
+  @Override
+  public String toString() {
+    final StringBuilder buffer = new StringBuilder();
+
+    buffer.append("tx[");
+    buffer.append(tasks.size());
+    buffer.append("]{");
+
+    for (int i = 0; i < tasks.size(); ++i) {
+      final OAbstractRecordReplicatedTask task = tasks.get(i);
+      if (i > 0)
+        buffer.append(',');
+      buffer.append(task);
+    }
+
+    buffer.append("}");
+    return buffer.toString();
   }
 }

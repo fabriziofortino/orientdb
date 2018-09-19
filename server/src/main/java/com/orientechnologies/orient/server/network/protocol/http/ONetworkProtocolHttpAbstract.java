@@ -88,7 +88,8 @@ public abstract class ONetworkProtocolHttpAbstract extends ONetworkProtocol {
       final OContextConfiguration iConfiguration) throws IOException {
     configuration = iConfiguration;
 
-    final boolean installDefaultCommands = iConfiguration.getValueAsBoolean(OGlobalConfiguration.NETWORK_HTTP_INSTALL_DEFAULT_COMMANDS);
+    final boolean installDefaultCommands = iConfiguration
+        .getValueAsBoolean(OGlobalConfiguration.NETWORK_HTTP_INSTALL_DEFAULT_COMMANDS);
     if (installDefaultCommands)
       registerStatelessCommands(iListener);
 
@@ -328,7 +329,11 @@ public abstract class ONetworkProtocolHttpAbstract extends ONetworkProtocol {
 
     if (errorReason == null) {
       errorReason = OHttpUtils.STATUS_INTERNALERROR_DESCRIPTION;
-      OLogManager.instance().error(this, "Internal server error:\n%s", errorMessage);
+      if (e instanceof NullPointerException) {
+        OLogManager.instance().error(this, "Internal server error:\n", e);
+      } else {
+        OLogManager.instance().debug(this, "Internal server error:\n", e);
+      }
     }
 
     try {
@@ -593,7 +598,7 @@ public abstract class ONetworkProtocolHttpAbstract extends ONetworkProtocol {
           // CONSUME THE NEXT \n
           channel.read();
 
-          request.httpMethod = words[0].toUpperCase();
+          request.httpMethod = words[0].toUpperCase(Locale.ENGLISH);
           request.url = words[1].trim();
 
           final int parametersPos = request.url.indexOf('?');
@@ -714,11 +719,13 @@ public abstract class ONetworkProtocolHttpAbstract extends ONetworkProtocol {
     cmdManager.registerCommand(new OServerCommandGetDocumentByClass());
     cmdManager.registerCommand(new OServerCommandGetQuery());
     cmdManager.registerCommand(new OServerCommandGetServer());
+    cmdManager.registerCommand(new OServerCommandGetServerVersion());
     cmdManager.registerCommand(new OServerCommandGetConnections());
     cmdManager.registerCommand(new OServerCommandGetStorageAllocation());
     cmdManager.registerCommand(new OServerCommandGetFileDownload());
     cmdManager.registerCommand(new OServerCommandGetIndex());
     cmdManager.registerCommand(new OServerCommandGetListDatabases());
+    cmdManager.registerCommand(new OServerCommandIsEnterprise());
     cmdManager.registerCommand(new OServerCommandGetExportDatabase());
     cmdManager.registerCommand(new OServerCommandPatchDocument());
     cmdManager.registerCommand(new OServerCommandPostBatch());

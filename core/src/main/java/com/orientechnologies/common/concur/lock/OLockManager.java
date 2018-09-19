@@ -39,7 +39,9 @@ public interface OLockManager<T> {
 
   Lock[] acquireExclusiveLocksInBatch(T... values);
 
-  void acquireExclusiveLocksInBatch(Collection<T> values);
+  Lock[] acquireExclusiveLocksInBatch(Collection<T> values);
+
+  Lock[] acquireSharedLocksInBatch(T[] keys);
 
   void lockAllExclusive();
 

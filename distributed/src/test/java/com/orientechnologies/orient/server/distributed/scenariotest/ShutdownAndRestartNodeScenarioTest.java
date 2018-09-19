@@ -22,10 +22,9 @@ import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
-import com.orientechnologies.orient.server.distributed.ODistributedConfiguration;
+import com.orientechnologies.orient.server.distributed.OModifiableDistributedConfiguration;
 import com.orientechnologies.orient.server.distributed.ServerRun;
 import com.orientechnologies.orient.server.hazelcast.OHazelcastPlugin;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.LinkedList;
@@ -53,24 +52,20 @@ import static org.junit.Assert.*;
  * - check consistency
  *
  * @author Gabriele Ponzi
- * @email  <gabriele.ponzi--at--gmail.com>
+ * @email <gabriele.ponzi--at--gmail.com>
  */
 
 public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
 
-  @Ignore
   @Test
   public void test() throws Exception {
     init(SERVERS);
     prepare(false);
-    super.executeWritesOnServers.addAll(super.serverInstance);
     execute();
   }
 
   @Override
   public void executeTest() throws Exception {
-
-    ODatabaseDocumentTx dbServer3 = new ODatabaseDocumentTx(getPlocalDatabaseURL(serverInstance.get(SERVERS-1))).open("admin", "admin");
 
     try {
 
@@ -111,11 +106,11 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
 
   }
 
-  private class TestQuorum2 implements Callable<Void>  {
+  private class TestQuorum2 implements Callable<Void> {
 
-    private final String    databaseUrlServer3;
-    private List<ServerRun> serverInstances;
-    private List<ServerRun> executeWritesOnServers;
+    private final String          databaseUrlServer3;
+    private       List<ServerRun> serverInstances;
+    private       List<ServerRun> executeWritesOnServers;
     private int initialCount = 0;
 
     public TestQuorum2(List<ServerRun> serverInstances) {
@@ -142,13 +137,13 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
 
         // network fault on server3
         System.out.println("Network fault on server3.\n");
-        simulateServerFault(this.serverInstances.get(SERVERS - 1),"net-fault");
+        simulateServerFault(this.serverInstances.get(SERVERS - 1), "net-fault");
         assertFalse(serverInstance.get(2).isActive());
 
         // trying write on server3, writes must be served from the first available node
         try {
           ODatabaseRecordThreadLocal.INSTANCE.set(dbServer3);
-          new ODocument("Person").fields("name", "Joe", "surname", "Black").save();
+          ODocument doc = new ODocument("Person").fields("name", "Joe", "surname", "Black").save();
           this.initialCount++;
           result = dbServer3.query(new OSQLSynchQuery<OIdentifiable>("select count(*) from Person"));
           assertEquals(1, result.size());
@@ -180,7 +175,7 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
         e.printStackTrace();
         fail(e.getMessage());
       } finally {
-        if(dbServer3 != null) {
+        if (dbServer3 != null) {
           ODatabaseRecordThreadLocal.INSTANCE.set(dbServer3);
           dbServer3.close();
           ODatabaseRecordThreadLocal.INSTANCE.set(null);
@@ -191,12 +186,12 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
     }
   }
 
-  private class TestQuorum3 implements Callable<Void>  {
+  private class TestQuorum3 implements Callable<Void> {
 
-    private final String databaseUrl1;
-    private final String databaseUrl2;
-    private List<ServerRun> serverInstances;
-    private List<ServerRun> executeWritesOnServers;
+    private final String          databaseUrl1;
+    private final String          databaseUrl2;
+    private       List<ServerRun> serverInstances;
+    private       List<ServerRun> executeWritesOnServers;
     private int initialCount = 0;
 
     public TestQuorum3(List<ServerRun> serverInstances) {
@@ -207,7 +202,6 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
       this.databaseUrl1 = getPlocalDatabaseURL(serverInstances.get(0));
       this.databaseUrl2 = getPlocalDatabaseURL(serverInstances.get(1));
     }
-
 
     @Override
     public Void call() throws Exception {
@@ -236,18 +230,21 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
         ODocument cfg = null;
         ServerRun server = serverInstance.get(0);
         OHazelcastPlugin manager = (OHazelcastPlugin) server.getServerInstance().getDistributedManager();
-        ODistributedConfiguration databaseConfiguration = manager.getDatabaseConfiguration(getDatabaseName());
+        OModifiableDistributedConfiguration databaseConfiguration = manager.getDatabaseConfiguration(getDatabaseName()).modify();
         cfg = databaseConfiguration.getDocument();
         cfg.field("writeQuorum", 3);
         cfg.field("version", (Integer) cfg.field("version") + 1);
-        manager.updateCachedDatabaseConfiguration(getDatabaseName(), cfg, true, true);
+        manager.updateCachedDatabaseConfiguration(getDatabaseName(), databaseConfiguration, true);
 
         System.out.println("\nConfiguration updated.");
 
         // network fault on server3
         System.out.println("Network fault on server3.\n");
-        simulateServerFault(this.serverInstances.get(SERVERS - 1),"net-fault");
+        simulateServerFault(this.serverInstances.get(SERVERS - 1), "net-fault");
         assertFalse(serverInstance.get(2).isActive());
+
+        waitForDatabaseIsOffline(serverInstances.get(SERVERS - 1).getServerInstance().getDistributedManager().getLocalNodeName(),
+            getDatabaseName(), 10000);
 
         // single write
         System.out.print("Insert operation in the database...");
@@ -257,7 +254,7 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
           fail("Error: record inserted with 2 server running and writeWuorum=3.");
         } catch (Exception e) {
           e.printStackTrace();
-          assertTrue("Record not inserted because there are 2 server running and writeWuorum=3.", true);
+          assertTrue("Record not inserted because there are 2 servers running and writeQuorum=3.", true);
         }
         System.out.println("Done.\n");
 
@@ -278,8 +275,23 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
         System.out.println("Server 3 restarted.");
         assertTrue(serverInstance.get(2).isActive());
 
+        waitForDatabaseIsOnline(0, serverInstances.get(SERVERS - 1).getServerInstance().getDistributedManager().getLocalNodeName(),
+            getDatabaseName(), 10000);
+
+        System.out.println("Server 3 database is online.");
+
+        // WAIT A LITTLE THE SERVER IS SYNCHRONIZED
+        Thread.sleep(5000);
+
+        System.out.println("Starting new tests...");
+
         // writes on server1, server2 and server3
         executeMultipleWrites(this.executeWritesOnServers, "plocal");
+
+        // WAIT A LITTLE THE SERVER IS SYNCHRONIZED
+        Thread.sleep(5000);
+
+        System.out.println("Checking consistency...");
 
         // check consistency
         ODatabaseRecordThreadLocal.INSTANCE.set(dbServer1);
@@ -293,7 +305,7 @@ public class ShutdownAndRestartNodeScenarioTest extends AbstractScenarioTest {
         e.printStackTrace();
         fail(e.getMessage());
       } finally {
-        if(dbServer1 != null) {
+        if (dbServer1 != null) {
           ODatabaseRecordThreadLocal.INSTANCE.set(dbServer1);
           dbServer1.close();
           ODatabaseRecordThreadLocal.INSTANCE.set(null);

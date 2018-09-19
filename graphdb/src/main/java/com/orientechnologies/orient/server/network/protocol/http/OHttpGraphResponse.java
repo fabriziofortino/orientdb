@@ -23,12 +23,14 @@ import com.orientechnologies.common.collection.OMultiValue;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.serializer.OJSONWriter;
 import com.tinkerpop.blueprints.Direction;
 import com.tinkerpop.blueprints.Edge;
 import com.tinkerpop.blueprints.impls.orient.OrientEdge;
+import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
 import com.tinkerpop.blueprints.impls.orient.OrientGraphNoTx;
 import com.tinkerpop.blueprints.impls.orient.OrientVertex;
 
@@ -52,8 +54,10 @@ public class OHttpGraphResponse extends OHttpResponse {
 
   public void writeRecords(final Object iRecords, final String iFetchPlan, String iFormat, final String accept,
       final Map<String, Object> iAdditionalProperties, final String mode) throws IOException {
-    if (iRecords == null)
+    if (iRecords == null) {
+      send(OHttpUtils.STATUS_OK_NOCONTENT_CODE, "", OHttpUtils.CONTENT_TEXT_PLAIN, null, null);
       return;
+    }
 
     if (!mode.equalsIgnoreCase("graph")) {
       super.writeRecords(iRecords, iFetchPlan, iFormat, accept, iAdditionalProperties, mode);
@@ -63,108 +67,139 @@ public class OHttpGraphResponse extends OHttpResponse {
     if (accept != null && accept.contains("text/csv"))
       throw new IllegalArgumentException("Graph mode cannot accept '" + accept + "'");
 
-    final OrientGraphNoTx graph = new OrientGraphNoTx((ODatabaseDocumentTx) ODatabaseRecordThreadLocal.INSTANCE.get());
+    final OrientGraphNoTx graph = (OrientGraphNoTx) OrientGraphFactory.getNoTxGraphImplFactory()
+        .getGraph((ODatabaseDocumentTx) ODatabaseRecordThreadLocal.INSTANCE.get());
 
-    // DIVIDE VERTICES FROM EDGES
-    final Set<OrientVertex> vertices = new HashSet<OrientVertex>();
-    final Set<OrientEdge> edges = new HashSet<OrientEdge>();
+    try {
+      //all the edges in the result-set
+      final Set<OrientEdge> rsEdges = new HashSet<OrientEdge>();
 
-    final Iterator<Object> iIterator = OMultiValue.getMultiValueIterator(iRecords);
-    while (iIterator.hasNext()) {
-      Object entry = iIterator.next();
-      if (entry == null || !(entry instanceof OIdentifiable))
-        // IGNORE IT
-        continue;
+      //all the vertices sent
+      final Set<OrientVertex> vertices = new HashSet<OrientVertex>();
 
-      entry = ((OIdentifiable)entry).getRecord();
-
-      if (entry == null || !(entry instanceof OIdentifiable))
-        // IGNORE IT
-        continue;
-
-      if (entry instanceof ODocument) {
-        OClass schemaClass = ((ODocument) entry).getSchemaClass();
-        if (schemaClass!=null && schemaClass.isVertexType())
-          vertices.add(graph.getVertex(entry));
-        else if (schemaClass!=null && schemaClass.isEdgeType())
-          edges.add(graph.getEdge(entry));
-        else
+      final Iterator<Object> iIterator = OMultiValue.getMultiValueIterator(iRecords);
+      while (iIterator.hasNext()) {
+        Object entry = iIterator.next();
+        if (entry == null || !(entry instanceof OIdentifiable))
           // IGNORE IT
           continue;
-      }
-    }
 
-    final StringWriter buffer = new StringWriter();
-    final OJSONWriter json = new OJSONWriter(buffer, "");
+        entry = ((OIdentifiable) entry).getRecord();
+
+        if (entry == null || !(entry instanceof OIdentifiable))
+          // IGNORE IT
+          continue;
+
+        if (entry instanceof ODocument) {
+          OClass schemaClass = ((ODocument) entry).getSchemaClass();
+          if (schemaClass != null && schemaClass.isVertexType())
+            vertices.add(graph.getVertex(entry));
+          else if (schemaClass != null && schemaClass.isEdgeType()) {
+            OrientEdge edge = graph.getEdge(entry);
+            rsEdges.add(edge);
+            vertices.add(graph.getVertex(edge.getVertex(Direction.IN)));
+            vertices.add(graph.getVertex(edge.getVertex(Direction.OUT)));
+          } else
+            // IGNORE IT
+            continue;
+        }
+      }
+
+      final StringWriter buffer = new StringWriter();
+      final OJSONWriter json = new OJSONWriter(buffer, "");
+      json.beginObject();
+      json.beginObject("graph");
+
+      // WRITE VERTICES
+      json.beginCollection("vertices");
+      for (OrientVertex vertex : vertices) {
+        json.beginObject();
+
+        json.writeAttribute("@rid", vertex.getIdentity());
+        json.writeAttribute("@class", vertex.getRecord().getClassName());
+
+        // ADD ALL THE PROPERTIES
+        for (String field : vertex.getPropertyKeys()) {
+          final Object v = vertex.getProperty(field);
+          if (v != null)
+            json.writeAttribute(field, v);
+        }
+        json.endObject();
+      }
+      json.endCollection();
+
+      // WRITE EDGES
+      json.beginCollection("edges");
+      if (rsEdges.isEmpty()) {
+        //no explicit edges in the result-set, let's calculate them from vertices
+        Set<ORID> edgeRids = new HashSet<ORID>();
+        for (OrientVertex vertex : vertices) {
+          for (Edge e : vertex.getEdges(Direction.BOTH)) {
+            OrientEdge edge = (OrientEdge) e;
+            if (edgeRids.contains(((OrientEdge) e).getIdentity())) {
+              continue;
+            }
+            if (!vertices.contains(edge.getVertex(Direction.OUT)) || !vertices.contains(edge.getVertex(Direction.IN)))
+              // ONE OF THE 2 VERTICES ARE NOT PART OF THE RESULT SET: DISCARD IT
+              continue;
+
+            edgeRids.add(edge.getIdentity());
+
+            writeEdge(edge, json);
+          }
+        }
+      } else {
+        //edges are explicitly in the RS, only send them
+        for (OrientEdge edge : rsEdges) {
+          if (!vertices.contains(edge.getVertex(Direction.OUT)) || !vertices.contains(edge.getVertex(Direction.IN)))
+            // ONE OF THE 2 VERTICES ARE NOT PART OF THE RESULT SET: DISCARD IT
+            continue;
+
+          writeEdge(edge, json);
+        }
+      }
+      json.endCollection();
+
+      if (iAdditionalProperties != null) {
+        for (Map.Entry<String, Object> entry : iAdditionalProperties.entrySet()) {
+
+          final Object v = entry.getValue();
+          if (OMultiValue.isMultiValue(v)) {
+            json.beginCollection(-1, true, entry.getKey());
+            formatMultiValue(OMultiValue.getMultiValueIterator(v), buffer, null);
+            json.endCollection(-1, true);
+          } else
+            json.writeAttribute(entry.getKey(), v);
+
+          if (Thread.currentThread().isInterrupted())
+            break;
+
+        }
+      }
+
+      json.endObject();
+      json.endObject();
+
+      send(OHttpUtils.STATUS_OK_CODE, "OK", OHttpUtils.CONTENT_JSON, buffer.toString(), null);
+    } finally {
+      graph.shutdown();
+    }
+  }
+
+  private void writeEdge(OrientEdge edge, OJSONWriter json) throws IOException {
     json.beginObject();
-    json.beginObject("graph");
+    json.writeAttribute("@rid", edge.getIdentity());
+    json.writeAttribute("@class", edge.getRecord().getClassName());
 
-    // WRITE VERTICES
-    json.beginCollection("vertices");
-    for (OrientVertex vertex : vertices) {
-      json.beginObject();
+    json.writeAttribute("out", edge.getVertex(Direction.OUT).getId());
+    json.writeAttribute("in", edge.getVertex(Direction.IN).getId());
 
-      json.writeAttribute("@rid", vertex.getIdentity());
-      json.writeAttribute("@class", vertex.getRecord().getClassName());
-
-      // ADD ALL THE VERTEX'S EDGES
-      for (Edge e : vertex.getEdges(Direction.BOTH))
-        edges.add((OrientEdge) e);
-
-      // ADD ALL THE PROPERTIES
-      for (String field : vertex.getPropertyKeys()) {
-        final Object v = vertex.getProperty(field);
-        if (v != null)
-          json.writeAttribute(field, v);
-      }
-      json.endObject();
-    }
-    json.endCollection();
-
-    // WRITE EDGES
-    json.beginCollection("edges");
-    for (OrientEdge edge : edges) {
-      if (!vertices.contains(edge.getVertex(Direction.OUT)) || !vertices.contains(edge.getVertex(Direction.IN)))
-        // ONE OF THE 2 VERTICES ARE NOT PART OF THE RESULT SET: DISCARD IT
-        continue;
-
-      json.beginObject();
-      json.writeAttribute("@rid", edge.getIdentity());
-      json.writeAttribute("@class", edge.getRecord().getClassName());
-
-      json.writeAttribute("out", edge.getVertex(Direction.OUT).getId());
-      json.writeAttribute("in", edge.getVertex(Direction.IN).getId());
-
-      for (String field : edge.getPropertyKeys()) {
-        final Object v = edge.getProperty(field);
-        if (v != null)
-          json.writeAttribute(field, v);
-      }
-
-      json.endObject();
-    }
-    json.endCollection();
-
-    if (iAdditionalProperties != null) {
-      for (Map.Entry<String, Object> entry : iAdditionalProperties.entrySet()) {
-
-        final Object v = entry.getValue();
-        if (OMultiValue.isMultiValue(v)) {
-          json.beginCollection(-1, true, entry.getKey());
-          formatMultiValue(OMultiValue.getMultiValueIterator(v), buffer, null);
-          json.endCollection(-1, true);
-        } else
-          json.writeAttribute(entry.getKey(), v);
-
-        if (Thread.currentThread().isInterrupted())
-          break;
-
-      }
+    for (String field : edge.getPropertyKeys()) {
+      final Object v = edge.getProperty(field);
+      if (v != null)
+        json.writeAttribute(field, v);
     }
 
     json.endObject();
-    json.endObject();
-
-    send(OHttpUtils.STATUS_OK_CODE, "OK", OHttpUtils.CONTENT_JSON, buffer.toString(), null);
   }
 }

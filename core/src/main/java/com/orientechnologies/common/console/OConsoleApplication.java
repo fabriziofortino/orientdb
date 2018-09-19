@@ -52,6 +52,7 @@ public class OConsoleApplication {
   protected boolean                 interactiveMode;
   protected String[]                args;
   protected TreeMap<Method, Object> methods;
+  protected boolean                 debugMode;
 
   protected enum RESULT {
     OK, ERROR, EXIT
@@ -59,6 +60,8 @@ public class OConsoleApplication {
 
   public OConsoleApplication(String[] iArgs) {
     this.args = iArgs;
+
+    debugMode = Boolean.valueOf(System.getProperty("debugMode"));
   }
 
   public static String getCorrectMethodName(Method m) {
@@ -145,14 +148,22 @@ public class OConsoleApplication {
 
   public void message(final String iMessage, final Object... iArgs) {
     final int verboseLevel = getVerboseLevel();
-    if (verboseLevel > 1)
-      out.printf(iMessage, iArgs);
+    if (verboseLevel > 1) {
+      if (iArgs != null && iArgs.length > 0)
+        out.printf(iMessage, iArgs);
+      else
+        out.print(iMessage);
+    }
   }
 
   public void error(final String iMessage, final Object... iArgs) {
     final int verboseLevel = getVerboseLevel();
-    if (verboseLevel > 0)
-      out.printf(iMessage, iArgs);
+    if (verboseLevel > 0) {
+      if (iArgs != null && iArgs.length > 0)
+        out.printf(iMessage, iArgs);
+      else
+        out.print(iMessage);
+    }
   }
 
   public int getVerboseLevel() {
@@ -173,7 +184,7 @@ public class OConsoleApplication {
   protected boolean isPropertyEnabled(final String iPropertyName) {
     String v = properties.get(iPropertyName);
     if (v != null) {
-      v = v.toLowerCase();
+      v = v.toLowerCase(Locale.ENGLISH);
       return v.equals("true") || v.equals("on");
     }
     return false;
@@ -323,7 +334,7 @@ public class OConsoleApplication {
       if (i > 0) {
         commandLowerCase += " ";
       }
-      commandLowerCase += commandWords[i].toLowerCase();
+      commandLowerCase += commandWords[i].toLowerCase(Locale.ENGLISH);
     }
 
     for (Entry<Method, Object> entry : getConsoleMethods().entrySet()) {
@@ -431,10 +442,7 @@ public class OConsoleApplication {
       // COMMENT: JUMP IT
       return null;
 
-    Method lastMethodInvoked = null;
-    final StringBuilder lastCommandInvoked = new StringBuilder(1024);
-
-    final String commandLowerCase = iCommand.toLowerCase();
+    final String commandLowerCase = iCommand.toLowerCase(Locale.ENGLISH);
 
     final Map<Method, Object> methodMap = getConsoleMethods();
 
@@ -494,9 +502,6 @@ public class OConsoleApplication {
       } else
         return m;
     }
-
-    if (lastMethodInvoked != null)
-      syntaxError(lastCommandInvoked.toString(), lastMethodInvoked);
 
     error("\n!Unrecognized command: '%s'", iCommand);
     return null;

@@ -15,23 +15,21 @@
  */
 package com.orientechnologies.orient.server.distributed;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 import com.orientechnologies.common.util.OCallable;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import org.junit.Assert;
+import org.junit.Test;
 
 /**
  * Distributed non TX test against "remote" protocol. It starts 3 servers and during a stress test, kill last server. The test
  * checks all the clients can auto-reconnect to the next available server.
  */
 public class HACrashTest extends AbstractServerClusterTxTest {
-  final static int         SERVERS         = 3;
-  volatile private boolean inserting       = true;
-  volatile private int     serverStarted   = 0;
-  volatile private boolean serverRestarted = false;
+  private final static int     SERVERS         = 3;
+  private volatile     boolean inserting       = true;
+  private volatile     int     serverStarted   = 0;
+  private volatile     boolean serverRestarted = false;
 
-  // @Ignore
   @Test
   public void test() throws Exception {
     startupNodesInSequence = true;
@@ -56,12 +54,12 @@ public class HACrashTest extends AbstractServerClusterTxTest {
           try {
             // CRASH LAST SERVER try {
             executeWhen(0, new OCallable<Boolean, ODatabaseDocumentTx>() {
-              // CONDITION
-              @Override
-              public Boolean call(ODatabaseDocumentTx db) {
-                return db.countClass("Person") > (count * SERVERS * writerCount + baseCount) * 1 / 3;
-              }
-            }, // ACTION
+                  // CONDITION
+                  @Override
+                  public Boolean call(ODatabaseDocumentTx db) {
+                    return db.countClass("Person") > (count * SERVERS * writerCount + baseCount) * 1 / 3;
+                  }
+                }, // ACTION
                 new OCallable<Boolean, ODatabaseDocumentTx>() {
                   @Override
                   public Boolean call(ODatabaseDocumentTx db) {
@@ -126,7 +124,7 @@ public class HACrashTest extends AbstractServerClusterTxTest {
   protected void onAfterExecution() throws Exception {
     inserting = false;
 
-    waitFor(5000, new OCallable<Boolean, Void>() {
+    waitFor(20000, new OCallable<Boolean, Void>() {
       @Override
       public Boolean call(Void iArgument) {
         return serverRestarted;
@@ -138,7 +136,12 @@ public class HACrashTest extends AbstractServerClusterTxTest {
   }
 
   protected String getDatabaseURL(final ServerRun server) {
-    return "remote:" + server.getBinaryProtocolAddress() + "/" + getDatabaseName();
+    final String address = server.getBinaryProtocolAddress();
+
+    if (address == null)
+      return null;
+
+    return "remote:" + address + "/" + getDatabaseName();
   }
 
   @Override

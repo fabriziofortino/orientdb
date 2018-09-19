@@ -13,6 +13,7 @@ import org.junit.Test;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -94,9 +95,14 @@ public abstract class OrientGraphTest extends GraphTest {
 
   @Test
   public void testTransactionalGraphTestSuite() throws Exception {
-    this.stopWatch();
-    doTestSuite(new TransactionalGraphTestSuite(this));
-    printTestPerformance("TransactionGraphTestSuite", this.stopWatch());
+    try {
+      this.stopWatch();
+      doTestSuite(new TransactionalGraphTestSuite(this));
+      printTestPerformance("TransactionGraphTestSuite", this.stopWatch());
+    } catch (Exception e) {
+      e.printStackTrace();
+      throw e;
+    }
   }
 
   @Test
@@ -197,7 +203,7 @@ public abstract class OrientGraphTest extends GraphTest {
   }
 
   public static ENV getEnvironment() {
-    String envName = System.getProperty("orientdb.test.env", "dev").toUpperCase();
+    String envName = System.getProperty("orientdb.test.env", "dev").toUpperCase(Locale.ENGLISH);
     ENV result = null;
     try {
       result = ENV.valueOf(envName);

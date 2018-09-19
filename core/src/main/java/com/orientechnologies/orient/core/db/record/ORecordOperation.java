@@ -19,7 +19,10 @@
  */
 package com.orientechnologies.orient.core.db.record;
 
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.ORecord;
+
+import java.util.Locale;
 
 /**
  * Contains the information about a database operation.
@@ -28,15 +31,14 @@ import com.orientechnologies.orient.core.record.ORecord;
  */
 public class ORecordOperation implements Comparable {
 
-  private static final long serialVersionUID = 1L;
+  public static final byte LOADED   = 0;
+  public static final byte UPDATED  = 1;
+  public static final byte DELETED  = 2;
+  public static final byte CREATED  = 3;
+  public static final byte RECYCLED = 4;
 
-  public static final byte  LOADED           = 0;
-  public static final byte  UPDATED          = 1;
-  public static final byte  DELETED          = 2;
-  public static final byte  CREATED          = 3;
-
-  public byte               type;
-  public OIdentifiable      record;
+  public byte          type;
+  public OIdentifiable record;
 
   public ORecordOperation() {
   }
@@ -75,6 +77,10 @@ public class ORecordOperation implements Comparable {
     return record != null ? record.getRecord() : null;
   }
 
+  public ORID getRID() {
+    return record != null ? record.getIdentity() : null;
+  }
+
   public static String getName(final int type) {
     String operation = "?";
     switch (type) {
@@ -90,12 +96,15 @@ public class ORecordOperation implements Comparable {
     case ORecordOperation.LOADED:
       operation = "READ";
       break;
+    case ORecordOperation.RECYCLED:
+      operation = "RECYCLED";
+      break;
     }
     return operation;
   }
 
   public static byte getId(String iName) {
-    iName = iName.toUpperCase();
+    iName = iName.toUpperCase(Locale.ENGLISH);
 
     if (iName.startsWith("CREAT"))
       return ORecordOperation.CREATED;
@@ -105,6 +114,8 @@ public class ORecordOperation implements Comparable {
       return ORecordOperation.DELETED;
     else if (iName.startsWith("READ"))
       return ORecordOperation.LOADED;
+    else if (iName.startsWith("RECYCLED"))
+      return ORecordOperation.RECYCLED;
     return -1;
   }
 

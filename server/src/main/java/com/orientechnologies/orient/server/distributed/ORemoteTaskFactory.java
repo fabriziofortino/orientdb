@@ -23,9 +23,11 @@ import com.orientechnologies.orient.server.distributed.task.ORemoteTask;
 
 /**
  * Factory for remote tasks.
- * 
+ *
  * @author Luca Garulli
  */
 public interface ORemoteTaskFactory {
   ORemoteTask createTask(final int code);
+
+  int getProtocolVersion();
 }

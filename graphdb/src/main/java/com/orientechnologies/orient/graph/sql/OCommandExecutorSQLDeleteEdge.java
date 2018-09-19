@@ -33,6 +33,7 @@ import com.orientechnologies.orient.core.sql.OCommandExecutorSQLSetAware;
 import com.orientechnologies.orient.core.sql.OCommandSQLParsingException;
 import com.orientechnologies.orient.core.sql.OSQLEngine;
 import com.orientechnologies.orient.core.sql.filter.OSQLFilter;
+import com.orientechnologies.orient.core.sql.parser.ODeleteEdgeStatement;
 import com.orientechnologies.orient.core.sql.query.OSQLAsynchQuery;
 import com.tinkerpop.blueprints.Direction;
 import com.tinkerpop.blueprints.Edge;
@@ -129,6 +130,11 @@ public class OCommandExecutorSQLDeleteEdge extends OCommandExecutorSQLSetAware
               clazz = graph.getEdgeType(OrientEdgeType.CLASS_NAME);
 
             where = parserGetCurrentPosition() > -1 ? " " + parserText.substring(parserGetCurrentPosition()) : "";
+            if(this.preParsedStatement!=null){
+              StringBuilder builder = new StringBuilder();
+              ((ODeleteEdgeStatement)this.preParsedStatement).getWhereClause().toString(parameters, builder);
+              where = builder.toString();
+            }
 
             compiledFilter = OSQLEngine.getInstance().parseCondition(where, getContext(), KEYWORD_WHERE);
             break;
@@ -226,30 +232,51 @@ public class OCommandExecutorSQLDeleteEdge extends OCommandExecutorSQLSetAware
             Set<OIdentifiable> toIds = null;
             if (toExpr != null)
               toIds = OSQLEngine.getInstance().parseRIDTarget(graph.getRawGraph(), toExpr, context, iArgs);
-
+            if(label == null )
+              label = OrientEdgeType.CLASS_NAME;
+            
             if (fromIds != null && toIds != null) {
-              // REMOVE ALL THE EDGES BETWEEN VERTICES
+              int fromCount = 0;
+              int toCount = 0;
               for (OIdentifiable fromId : fromIds) {
                 final OrientVertex v = graph.getVertex(fromId);
                 if (v != null)
-                  for (Edge e : v.getEdges(Direction.OUT)) {
-                    if (label != null && !label.equals(e.getLabel()))
-                      continue;
-
-                    final OIdentifiable inV = ((OrientEdge) e).getInVertex();
-                    if (inV != null && toIds.contains(inV.getIdentity()))
-                      edges.add((OrientEdge) e);
-                  }
+                  fromCount += v.countEdges(Direction.OUT, label);
+              }
+              for (OIdentifiable toId : toIds) {
+                final OrientVertex v = graph.getVertex(toId);
+                if (v != null)
+                  toCount += v.countEdges(Direction.IN, label);
+              }
+              if (fromCount <= toCount) {
+                // REMOVE ALL THE EDGES BETWEEN VERTICES
+                for (OIdentifiable fromId : fromIds) {
+                  final OrientVertex v = graph.getVertex(fromId);
+                  if (v != null)
+                    for (Edge e : v.getEdges(Direction.OUT, label)) {
+                      final OIdentifiable inV = ((OrientEdge) e).getInVertex();
+                      if (inV != null && toIds.contains(inV.getIdentity()))
+                        edges.add((OrientEdge) e);
+                    }
+                }
+              } else {
+                for (OIdentifiable toId : toIds) {
+                  final OrientVertex v = graph.getVertex(toId);
+                  if (v != null)
+                    for (Edge e : v.getEdges(Direction.IN, label)) {
+                      final OIdentifiable outV = ((OrientEdge) e).getOutVertex();
+                      if (outV != null && fromIds.contains(outV.getIdentity()))
+                        edges.add((OrientEdge) e);
+                    }
+                }
               }
             } else if (fromIds != null) {
               // REMOVE ALL THE EDGES THAT START FROM A VERTEXES
               for (OIdentifiable fromId : fromIds) {
+                
                 final OrientVertex v = graph.getVertex(fromId);
                 if (v != null) {
-                  for (Edge e : v.getEdges(Direction.OUT)) {
-                    if (label != null && !label.equals(e.getLabel()))
-                      continue;
-
+                  for (Edge e : v.getEdges(Direction.OUT, label)) {
                     edges.add((OrientEdge) e);
                   }
                 }
@@ -259,10 +286,7 @@ public class OCommandExecutorSQLDeleteEdge extends OCommandExecutorSQLSetAware
               for (OIdentifiable toId : toIds) {
                 final OrientVertex v = graph.getVertex(toId);
                 if (v != null) {
-                  for (Edge e : v.getEdges(Direction.IN)) {
-                    if (label != null && !label.equals(e.getLabel()))
-                      continue;
-
+                  for (Edge e : v.getEdges(Direction.IN, label)) {
                     edges.add((OrientEdge) e);
                   }
                 }
@@ -381,8 +405,7 @@ public class OCommandExecutorSQLDeleteEdge extends OCommandExecutorSQLSetAware
   }
 
   public DISTRIBUTED_EXECUTION_MODE getDistributedExecutionMode() {
-    return query != null && !getDatabase().getTransaction().isActive() ? DISTRIBUTED_EXECUTION_MODE.REPLICATE
-        : DISTRIBUTED_EXECUTION_MODE.LOCAL;
+    return DISTRIBUTED_EXECUTION_MODE.LOCAL;
   }
 
   @Override

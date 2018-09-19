@@ -19,29 +19,22 @@
  */
 package com.orientechnologies.orient.core.sql;
 
-import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.orient.core.command.OCommandDistributedReplicateRequest;
 import com.orientechnologies.orient.core.command.OCommandRequest;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
-import com.orientechnologies.orient.core.config.OStorageClusterConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.exception.OCommandExecutionException;
 import com.orientechnologies.orient.core.storage.OCluster;
 import com.orientechnologies.orient.core.storage.OCluster.ATTRIBUTES;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * SQL ALTER PROPERTY command: Changes an attribute of an existent property in the target class.
+ * SQL ALTER CLUSTER command: Changes an attribute of an existing cluster
  *
  * @author Luca Garulli
  */
@@ -103,15 +96,16 @@ public class OCommandExecutorSQLAlterCluster extends OCommandExecutorSQLAbstract
       try {
         attribute = OCluster.ATTRIBUTES.valueOf(attributeAsString.toUpperCase(Locale.ENGLISH));
       } catch (IllegalArgumentException e) {
-        throw new OCommandSQLParsingException("Unknown class attribute '" + attributeAsString + "'. Supported attributes are: "
-            + Arrays.toString(OCluster.ATTRIBUTES.values()), parserText, oldPos);
+        throw new OCommandSQLParsingException(
+            "Unknown class attribute '" + attributeAsString + "'. Supported attributes are: " + Arrays
+                .toString(OCluster.ATTRIBUTES.values()), parserText, oldPos);
       }
 
       value = parserText.substring(pos + 1).trim();
 
       value = decodeClassName(value);
 
-      if(attribute == ATTRIBUTES.NAME){
+      if (attribute == ATTRIBUTES.NAME) {
         value = value.replaceAll(" ", ""); //no spaces in cluster names
       }
 
@@ -129,7 +123,7 @@ public class OCommandExecutorSQLAlterCluster extends OCommandExecutorSQLAbstract
   }
 
   /**
-   * Execute the ALTER CLASS.
+   * Execute the ALTER CLUSTER.
    */
   public Object execute(final Map<Object, Object> iArgs) {
     if (attribute == null)
@@ -145,22 +139,10 @@ public class OCommandExecutorSQLAlterCluster extends OCommandExecutorSQLAbstract
     for (OCluster cluster : getClusters()) {
       if (clusterId > -1 && clusterName.equals(String.valueOf(clusterId))) {
         clusterName = cluster.getName();
+        result = getDatabase().alterCluster(clusterName, attribute, value);
       } else {
         clusterId = cluster.getId();
-      }
-
-      try {
-        if (attribute == ATTRIBUTES.STATUS && OStorageClusterConfiguration.STATUS.OFFLINE.toString().equalsIgnoreCase(value))
-          // REMOVE CACHE OF COMMAND RESULTS IF ACTIVE
-          getDatabase().getMetadata().getCommandCache().invalidateResultsOfCluster(clusterName);
-
-        if (attribute == ATTRIBUTES.NAME)
-          // REMOVE CACHE OF COMMAND RESULTS IF ACTIVE
-          getDatabase().getMetadata().getCommandCache().invalidateResultsOfCluster(clusterName);
-
-        result = cluster.set(attribute, value);
-      } catch (IOException ioe) {
-        throw OException.wrapException(new OCommandExecutionException("Error altering cluster '" + clusterName + "'"), ioe);
+        result = getDatabase().alterCluster(clusterId, attribute, value);
       }
     }
 
@@ -178,7 +160,7 @@ public class OCommandExecutorSQLAlterCluster extends OCommandExecutorSQLAbstract
     final List<OCluster> result = new ArrayList<OCluster>();
 
     if (clusterName.endsWith("*")) {
-      final String toMatch = clusterName.substring(0, clusterName.length() - 1).toLowerCase();
+      final String toMatch = clusterName.substring(0, clusterName.length() - 1).toLowerCase(Locale.ENGLISH);
       for (String cl : database.getStorage().getClusterNames()) {
         if (cl.startsWith(toMatch))
           result.add(database.getStorage().getClusterByName(cl));

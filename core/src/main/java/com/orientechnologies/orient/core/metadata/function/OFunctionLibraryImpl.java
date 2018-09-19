@@ -72,12 +72,17 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
       List<ODocument> result = db.query(new OSQLSynchQuery<ODocument>("select from OFunction order by name"));
       for (ODocument d : result) {
         d.reload();
+
+        //skip the function records which do not contain real data
+        if (d.fields() == 0)
+          continue;
+
         final OFunction f = new OFunction(d);
 
         // RESTORE CALLBACK IF ANY
         f.setCallback(callbacks.get(f.getName()));
 
-        functions.put(d.field("name").toString().toUpperCase(), f);
+        functions.put(d.field("name").toString().toUpperCase(Locale.ENGLISH), f);
       }
     }
   }
@@ -87,7 +92,7 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
   }
 
   public OFunction getFunction(final String iName) {
-    return functions.get(iName.toUpperCase());
+    return functions.get(iName.toUpperCase(Locale.ENGLISH));
   }
 
   public synchronized OFunction createFunction(final String iName) {
@@ -99,7 +104,7 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
     } catch (ORecordDuplicatedException ex) {
       throw OException.wrapException(new OFunctionDuplicatedException("Function with name '" + iName + "' already exist"), null);
     }
-    functions.put(iName.toUpperCase(), f);
+    functions.put(iName.toUpperCase(Locale.ENGLISH), f);
 
     return f;
   }
@@ -120,6 +125,8 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
 
     final OClass f = db.getMetadata().getSchema().createClass("OFunction");
     OProperty prop = f.createProperty("name", OType.STRING, (OType) null, true);
+    prop.set(OProperty.ATTRIBUTES.NOTNULL, true);
+    prop.set(OProperty.ATTRIBUTES.MANDATORY, true);
     prop.createIndex(OClass.INDEX_TYPE.UNIQUE_HASH_INDEX);
     f.createProperty("code", OType.STRING, (OType) null, true);
     f.createProperty("language", OType.STRING, (OType) null, true);
@@ -132,7 +139,7 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
     String name = function.getName();
     ODocument doc = function.getDocument();
     doc.delete();
-    functions.remove(name.toUpperCase());
+    functions.remove(name.toUpperCase(Locale.ENGLISH));
   }
 
   @Override
@@ -140,6 +147,6 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
     OFunction function = getFunction(iName);
     ODocument doc = function.getDocument();
     doc.delete();
-    functions.remove(iName.toUpperCase());
+    functions.remove(iName.toUpperCase(Locale.ENGLISH));
   }
 }

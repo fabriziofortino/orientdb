@@ -55,7 +55,7 @@ public class LocalPaginatedStorageUpdateCrashRestoreIT {
     buildDir = new File(buildDirectory);
 
     if (buildDir.exists())
-      OFileUtils.deleteFolderIfEmpty(buildDir);
+      OFileUtils.deleteRecursively(buildDir);
 
     buildDir.mkdir();
 
@@ -69,12 +69,12 @@ public class LocalPaginatedStorageUpdateCrashRestoreIT {
 
     System.setProperty("ORIENTDB_HOME", buildDirectory);
 
-    ProcessBuilder processBuilder = new ProcessBuilder(javaExec, "-Xmx2048m", "-XX:MaxDirectMemorySize=512g", "-classpath", System.getProperty("java.class.path"),
-        "-DORIENTDB_HOME=" + buildDirectory, "-DmutexFile=" + mutexFile.getCanonicalPath(), RemoteDBRunner.class.getName());
-    processBuilder.inheritIO();
+    ProcessBuilder processBuilder = new ProcessBuilder(javaExec, "-Xmx2048m", "-XX:MaxDirectMemorySize=512g", "-classpath",
+        System.getProperty("java.class.path"), "-DORIENTDB_HOME=" + buildDirectory, "-DmutexFile=" + mutexFile.getCanonicalPath(),
+        RemoteDBRunner.class.getName());
+    CrashRestoreUtils.inheritIO(processBuilder);
 
     process = processBuilder.start();
-
 
     System.out.println(LocalPaginatedStorageUpdateCrashRestoreIT.class.getSimpleName() + ": Wait for server start");
     boolean started = false;
@@ -102,7 +102,9 @@ public class LocalPaginatedStorageUpdateCrashRestoreIT {
 
   @Before
   public void beforeMethod() throws Exception {
+
     spawnServer();
+
     baseDocumentTx = new ODatabaseDocumentTx(
         "plocal:" + buildDir.getAbsolutePath() + "/baseLocalPaginatedStorageUpdateCrashRestore");
     if (baseDocumentTx.exists()) {
@@ -138,7 +140,7 @@ public class LocalPaginatedStorageUpdateCrashRestoreIT {
 
     long lastTs = System.currentTimeMillis();
     System.out.println("Wait for process to destroy");
-    process.destroy();
+    CrashRestoreUtils.destroyForcibly(process);
     process.waitFor();
     System.out.println("Process was destroyed");
 
@@ -228,7 +230,7 @@ public class LocalPaginatedStorageUpdateCrashRestoreIT {
       final ORecordId rid = new ORecordId(clusterId);
 
       for (OPhysicalPosition physicalPosition : physicalPositions) {
-        rid.clusterPosition = physicalPosition.clusterPosition;
+        rid.setClusterPosition(physicalPosition.clusterPosition);
 
         baseDocumentTx.activateOnCurrentThread();
         ODocument baseDocument = baseDocumentTx.load(rid);

@@ -1,8 +1,5 @@
 package com.orientechnologies.orient.server.distributed;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.record.impl.ODocument;
@@ -11,10 +8,12 @@ import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
 import com.tinkerpop.blueprints.impls.orient.OrientGraphNoTx;
 import com.tinkerpop.blueprints.impls.orient.OrientVertex;
 import com.tinkerpop.blueprints.impls.orient.OrientVertexType;
+import org.junit.Assert;
+import org.junit.Test;
 
 /**
  * Tests with 2 servers the ability to resync a cluster manually.
- * 
+ *
  * @author Luca Garulli
  */
 public class TestShardingManualSync extends AbstractServerClusterTest {
@@ -76,15 +75,15 @@ public class TestShardingManualSync extends AbstractServerClusterTest {
       Assert.assertEquals(1, graphNoTxEurope.countVertices());
 
       // CHANGE THE WRITE QUORUM = 1
-      final ODistributedConfiguration dCfg = serverInstance.get(0).server.getDistributedManager()
-          .getDatabaseConfiguration(getDatabaseName());
+      final OModifiableDistributedConfiguration dCfg = serverInstance.get(0).server.getDistributedManager()
+          .getDatabaseConfiguration(getDatabaseName()).modify();
       ODocument newCfg = dCfg.getDocument().field("writeQuorum", 1);
-      serverInstance.get(0).server.getDistributedManager().updateCachedDatabaseConfiguration(getDatabaseName(), newCfg, true, true);
+      serverInstance.get(0).server.getDistributedManager().updateCachedDatabaseConfiguration(getDatabaseName(), dCfg, true);
 
       // CREATE A NEW RECORD ON SERVER 0 BYPASSING REPLICATION
       final ODocument v2 = new ODocument("Client");
-      ((ORecordId) v2.getIdentity()).clusterId = v1Identity.getClusterId();
-      ((ORecordId) v2.getIdentity()).clusterPosition = v1Identity.getClusterPosition() + 1;
+      ((ORecordId) v2.getIdentity()).setClusterId(v1Identity.getClusterId());
+      ((ORecordId) v2.getIdentity()).setClusterPosition(v1Identity.getClusterPosition() + 1);
       final Object result = createRemoteRecord(0, v2,
           new String[] { serverInstance.get(0).getServerInstance().getDistributedManager().getLocalNodeName() });
 
@@ -106,7 +105,7 @@ public class TestShardingManualSync extends AbstractServerClusterTest {
       Assert.assertEquals(1, graphNoTxUsa.countVertices());
 
       log("Manually syncing cluster client-type of node USA...");
-      graphNoTxUsa.command(new OCommandSQL("ha sync cluster " + clusterName)).execute();
+      graphNoTxUsa.command(new OCommandSQL("ha sync cluster `" + clusterName + "`")).execute();
 
       Assert.assertEquals(2, graphNoTxUsa.countVertices());
 

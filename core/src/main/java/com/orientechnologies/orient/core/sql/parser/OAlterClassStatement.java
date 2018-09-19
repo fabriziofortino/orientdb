@@ -23,7 +23,8 @@ public class OAlterClassStatement extends OStatement {
   protected Boolean           add;
   protected Boolean           remove;
   protected ONumber           numberValue;
-  protected Boolean           booleanValue;
+  public    OExpression       expression;
+
   public    OIdentifier       customKey;
   public    OExpression       customValue;
 
@@ -49,12 +50,18 @@ public class OAlterClassStatement extends OStatement {
     case SHORTNAME:
     case ADDCLUSTER:
     case REMOVECLUSTER:
-    case DESCRIPTION:
     case ENCRYPTION:
       if (numberValue != null) {
         numberValue.toString(params, builder);//clusters only
       } else if (identifierValue != null) {
         identifierValue.toString(params, builder);
+      } else {
+        builder.append("null");
+      }
+      break;
+    case DESCRIPTION:
+      if (expression != null) {
+        expression.toString(params, builder);
       } else {
         builder.append("null");
       }
@@ -99,7 +106,7 @@ public class OAlterClassStatement extends OStatement {
       break;
     case STRICTMODE:
     case ABSTRACT:
-      builder.append(booleanValue.booleanValue());
+      expression.toString(params, builder);
       break;
     case CUSTOM:
       customKey.toString(params, builder);

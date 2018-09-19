@@ -20,10 +20,7 @@
 package com.orientechnologies.orient.core.sql;
 
 import com.orientechnologies.common.util.OPair;
-import com.orientechnologies.orient.core.command.OCommandDistributedReplicateRequest;
-import com.orientechnologies.orient.core.command.OCommandRequest;
-import com.orientechnologies.orient.core.command.OCommandRequestText;
-import com.orientechnologies.orient.core.command.OCommandResultListener;
+import com.orientechnologies.orient.core.command.*;
 import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
@@ -33,9 +30,11 @@ import com.orientechnologies.orient.core.index.OIndex;
 import com.orientechnologies.orient.core.metadata.OMetadataInternal;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.record.ORecord;
+import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.serializer.OStringSerializerHelper;
 import com.orientechnologies.orient.core.sql.filter.OSQLFilterItemField;
+import com.orientechnologies.orient.core.sql.functions.OSQLFunctionRuntime;
 import com.orientechnologies.orient.core.sql.query.OSQLAsynchQuery;
 import com.orientechnologies.orient.core.storage.OCluster;
 
@@ -48,16 +47,16 @@ import java.util.concurrent.atomic.AtomicLong;
  * @author Luca Garulli
  * @author Johann Sorel (Geomatys)
  */
-public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware implements OCommandDistributedReplicateRequest,
-    OCommandResultListener {
-  public static final String             KEYWORD_INSERT   = "INSERT";
-  protected static final String          KEYWORD_RETURN   = "RETURN";
-  private static final String            KEYWORD_VALUES   = "VALUES";
-  private String                         className        = null;
-  private OClass                         clazz            = null;
-  private String                         clusterName      = null;
-  private String                         indexName        = null;
-  private List<Map<String, Object>>      newRecords;
+public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware
+    implements OCommandDistributedReplicateRequest, OCommandResultListener {
+  public static final    String KEYWORD_INSERT = "INSERT";
+  protected static final String KEYWORD_RETURN = "RETURN";
+  private static final   String KEYWORD_VALUES = "VALUES";
+  private                String className      = null;
+  private                OClass clazz          = null;
+  private                String clusterName    = null;
+  private                String indexName      = null;
+  private List<Map<String, Object>> newRecords;
   private OSQLAsynchQuery<OIdentifiable> subQuery         = null;
   private AtomicLong                     saved            = new AtomicLong(0);
   private Object                         returnExpression = null;
@@ -94,11 +93,16 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
       parserRequiredKeyword("INTO");
 
       String subjectName = parserRequiredWord(true, "Invalid subject name. Expected cluster, class or index");
-      if (subjectName.startsWith(OCommandExecutorSQLAbstract.CLUSTER_PREFIX))
+      if (subjectName.startsWith(OCommandExecutorSQLAbstract.CLUSTER_PREFIX)) {
         // CLUSTER
         clusterName = subjectName.substring(OCommandExecutorSQLAbstract.CLUSTER_PREFIX.length());
-
-      else if (subjectName.startsWith(OCommandExecutorSQLAbstract.INDEX_PREFIX))
+        try {
+          int clusterId = Integer.parseInt(clusterName);
+          clusterName = database.getClusterNameById(clusterId);
+        } catch (Exception e) {
+          //not an integer
+        }
+      } else if (subjectName.startsWith(OCommandExecutorSQLAbstract.INDEX_PREFIX))
         // INDEX
         indexName = subjectName.substring(OCommandExecutorSQLAbstract.INDEX_PREFIX.length());
 
@@ -122,12 +126,12 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
           throw new OQueryParsingException("Class '" + className + "' was not found");
       }
 
-      if(clusterName != null && className == null){
+      if (clusterName != null && className == null) {
         ODatabaseDocumentInternal db = getDatabase();
         OCluster cluster = db.getStorage().getClusterByName(clusterName);
-        if(cluster != null){
+        if (cluster != null) {
           clazz = db.getMetadata().getSchema().getClassByClusterId(cluster.getId());
-          if(clazz != null){
+          if (clazz != null) {
             className = clazz.getName();
           }
         }
@@ -242,6 +246,9 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
         saveRecord(doc);
         return prepareReturnItem(doc);
       } else if (subQuery != null) {
+        OBasicCommandContext subCtx = new OBasicCommandContext();
+        subCtx.setParent(this.context);
+        subQuery.setContext(subCtx);
         subQuery.execute();
         if (queryResult != null)
           return prepareReturnResult(queryResult);
@@ -254,7 +261,7 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
 
   @Override
   public OCommandDistributedReplicateRequest.DISTRIBUTED_EXECUTION_MODE getDistributedExecutionMode() {
-    return indexName != null ? DISTRIBUTED_EXECUTION_MODE.REPLICATE : DISTRIBUTED_EXECUTION_MODE.LOCAL;
+    return DISTRIBUTED_EXECUTION_MODE.LOCAL;
   }
 
   @Override
@@ -280,9 +287,10 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
     // RESET THE IDENTITY TO AVOID UPDATE
     rec.getIdentity().reset();
 
-    if (rec instanceof ODocument && className != null)
+    if (rec instanceof ODocument && className != null) {
       ((ODocument) rec).setClassName(className);
-
+      ((ODocument) rec).setTrackingChanges(true);
+    }
     rec.setDirty();
     synchronized (this) {
       saveRecord(rec);
@@ -341,7 +349,7 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
     final ArrayList<String> fieldNamesQuoted = new ArrayList<String>();
     parserSetCurrentPosition(OStringSerializerHelper.getParameters(parserText, beginFields, endFields, fieldNamesQuoted));
     final ArrayList<String> fieldNames = new ArrayList<String>();
-    for(String fieldName:fieldNamesQuoted){
+    for (String fieldName : fieldNamesQuoted) {
       fieldNames.add(decodeClassName(fieldName));
     }
 
@@ -361,8 +369,8 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
     int blockStart = parserGetCurrentPosition();
     int blockEnd = parserGetCurrentPosition();
 
-    final List<String> records = OStringSerializerHelper.smartSplit(parserText, new char[] { ',' }, blockStart, -1, true, true,
-        false, false);
+    final List<String> records = OStringSerializerHelper
+        .smartSplit(parserText, new char[] { ',' }, blockStart, -1, true, true, false, false);
     for (String record : records) {
 
       final List<String> values = new ArrayList<String>();
@@ -381,7 +389,7 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
       // TRANSFORM FIELD VALUES
       final Map<String, Object> fields = new LinkedHashMap<String, Object>();
       for (int i = 0; i < values.size(); ++i)
-        fields.put(fieldNames.get(i), OSQLHelper.parseValue(this, OStringSerializerHelper.decode(values.get(i).trim()), context));
+        fields.put(fieldNames.get(i), OSQLHelper.parseValue(this, values.get(i).trim(), context));
 
       newRecords.add(fields);
       blockStart = blockEnd;
@@ -411,9 +419,15 @@ public class OCommandExecutorSQLInsert extends OCommandExecutorSQLSetAware imple
       if (f.getRoot().equals("?"))
         // POSITIONAL PARAMETER
         return commandParameters.getNext();
-      else if (f.getRoot().startsWith(":"))
+      else if (f.getRoot().startsWith(":")) {
         // NAMED PARAMETER
         return commandParameters.getByName(f.getRoot().substring(1));
+      } else {
+        return f.getValue(new ODocument(), null, context);
+      }
+    } else if (parsedKey instanceof OSQLFunctionRuntime) {
+      OSQLFunctionRuntime f = (OSQLFunctionRuntime) parsedKey;
+      return f.execute(null, null, null, context);
     }
     return parsedKey;
   }

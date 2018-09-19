@@ -31,6 +31,7 @@ import com.orientechnologies.orient.core.metadata.schema.OClass;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -87,9 +88,9 @@ public class OCommandExecutorSQLTruncateClass extends OCommandExecutorSQLAbstrac
 
       while (pos > 0) {
         String nextWord = word.toString();
-        if (nextWord.toUpperCase().equals(KEYWORD_UNSAFE)) {
+        if (nextWord.toUpperCase(Locale.ENGLISH).equals(KEYWORD_UNSAFE)) {
           unsafe = true;
-        } else if (nextWord.toUpperCase().equals(KEYWORD_POLYMORPHIC)) {
+        } else if (nextWord.toUpperCase(Locale.ENGLISH).equals(KEYWORD_POLYMORPHIC)) {
           deep = true;
         }
         oldPos = pos;
@@ -109,7 +110,7 @@ public class OCommandExecutorSQLTruncateClass extends OCommandExecutorSQLAbstrac
     if (schemaClass == null)
       throw new OCommandExecutionException("Cannot execute the command because it has not been parsed yet");
 
-    final long recs = schemaClass.count();
+    final long recs = schemaClass.count(deep);
     if (recs > 0 && !unsafe) {
       if (schemaClass.isSubClassOf("V")) {
         throw new OCommandExecutionException(
@@ -177,7 +178,7 @@ public class OCommandExecutorSQLTruncateClass extends OCommandExecutorSQLAbstrac
   }
 
   @Override public String getSyntax() {
-    return "TRUNCATE CLASS <class-name>";
+    return "TRUNCATE CLASS <class-name> [UNSAFE] [POLYMORPHIC]";
   }
 
   @Override public QUORUM_TYPE getQuorumType() {

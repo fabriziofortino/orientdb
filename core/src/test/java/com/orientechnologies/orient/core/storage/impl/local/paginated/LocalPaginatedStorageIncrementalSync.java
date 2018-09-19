@@ -165,7 +165,7 @@ public class LocalPaginatedStorageIncrementalSync {
             do {
               newRecord = Orient.instance().getRecordFactoryManager().newInstance((byte) recordType);
 
-              ORecordInternal.fill(newRecord, new ORecordId(rid.getClusterId(), -1), recordVersion - 1, recordContent, true);
+              ORecordInternal.fill(newRecord, new ORecordId(rid.getClusterId(), -1), recordVersion, recordContent, true);
 
               newRecord.save();
 
@@ -322,9 +322,9 @@ public class LocalPaginatedStorageIncrementalSync {
 
       while (physicalPositions.length > 0) {
         for (OPhysicalPosition physicalPosition : physicalPositions) {
-          rid.clusterPosition = physicalPosition.clusterPosition;
-          final ORawBuffer originalBuffer = originalStorage.readRecord(rid, null, true, null).getResult();
-          final ORawBuffer syncBuffer = syncedStorage.readRecord(rid, null, true, null).getResult();
+          rid.setClusterPosition(physicalPosition.clusterPosition);
+          final ORawBuffer originalBuffer = originalStorage.readRecord(rid, null, true, false, null).getResult();
+          final ORawBuffer syncBuffer = syncedStorage.readRecord(rid, null, true, false, null).getResult();
 
           Assert.assertEquals(originalBuffer.recordType, syncBuffer.recordType);
           Assert.assertEquals(originalBuffer.version, syncBuffer.version);

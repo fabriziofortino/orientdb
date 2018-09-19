@@ -19,10 +19,6 @@
  */
 package com.orientechnologies.orient.server.distributed;
 
-import java.io.IOException;
-import java.util.Date;
-import java.util.concurrent.Executors;
-
 import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.common.io.OIOException;
 import com.orientechnologies.orient.client.binary.OChannelBinarySynchClient;
@@ -30,6 +26,10 @@ import com.orientechnologies.orient.core.OConstants;
 import com.orientechnologies.orient.core.config.OContextConfiguration;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.enterprise.channel.binary.OChannelBinaryProtocol;
+
+import java.io.IOException;
+import java.util.Date;
+import java.util.concurrent.Executors;
 
 /**
  * Remote server channel.
@@ -44,21 +44,22 @@ public class ORemoteServerChannel {
   private final String                    userName;
   private final String                    userPassword;
   private final String                    server;
-  private OChannelBinarySynchClient       channel;
+  private       OChannelBinarySynchClient channel;
+  private       int                       protocolVersion;
 
-  private static final int                MAX_RETRY              = 3;
-  private static final String             CLIENT_TYPE            = "OrientDB Server";
-  private static final boolean            COLLECT_STATS          = false;
-  private int                             sessionId              = -1;
-  private byte[]                          sessionToken;
-  private OContextConfiguration           contextConfig          = new OContextConfiguration();
-  private Date                            createdOn              = new Date();
+  private static final int     MAX_RETRY     = 3;
+  private static final String  CLIENT_TYPE   = "OrientDB Server";
+  private static final boolean COLLECT_STATS = false;
+  private              int     sessionId     = -1;
+  private byte[] sessionToken;
+  private OContextConfiguration contextConfig = new OContextConfiguration();
+  private Date                  createdOn     = new Date();
 
-  private volatile int                    totalConsecutiveErrors = 0;
-  private final static int                MAX_CONSECUTIVE_ERRORS = 10;
+  private volatile     int totalConsecutiveErrors = 0;
+  private final static int MAX_CONSECUTIVE_ERRORS = 10;
 
   public ORemoteServerChannel(final ODistributedServerManager manager, final String iServer, final String iURL, final String user,
-      final String passwd) throws IOException {
+      final String passwd, final int currentProtocolVersion) throws IOException {
     this.manager = manager;
     this.server = iServer;
     this.url = iURL;
@@ -69,7 +70,13 @@ public class ORemoteServerChannel {
     remoteHost = iURL.substring(0, sepPos);
     remotePort = Integer.parseInt(iURL.substring(sepPos + 1));
 
+    protocolVersion = currentProtocolVersion;
+
     connect();
+  }
+
+  public int getDistributedProtocolVersion() {
+    return protocolVersion;
   }
 
   public interface OStorageRemoteOperation<T> {
@@ -104,7 +111,7 @@ public class ORemoteServerChannel {
     channel = new OChannelBinarySynchClient(remoteHost, remotePort, null, contextConfig,
         OChannelBinaryProtocol.CURRENT_PROTOCOL_VERSION);
 
-    networkOperation(OChannelBinaryProtocol.REQUEST_CONNECT, new OStorageRemoteOperation<Void>() {
+    networkOperation(OChannelBinaryProtocol.DISTRIBUTED_CONNECT, new OStorageRemoteOperation<Void>() {
       @Override
       public Void execute() throws IOException {
         channel.writeString(CLIENT_TYPE).writeString(OConstants.ORIENT_VERSION)
@@ -117,6 +124,8 @@ public class ORemoteServerChannel {
         channel.writeString(userName);
         channel.writeString(userPassword);
 
+        channel.writeShort((short) protocolVersion);
+
         channel.flush();
 
         channel.beginResponse(false);
@@ -125,6 +134,10 @@ public class ORemoteServerChannel {
         if (sessionToken.length == 0) {
           sessionToken = null;
         }
+
+        // SET THE PROTOCOL TO THE MINIMUM NUMBER TO SUPPORT BACKWARD COMPATIBILITY
+        int remoteProtocolVersion = channel.readShort();
+        protocolVersion = Math.min(protocolVersion, remoteProtocolVersion);
 
         return null;
       }
@@ -141,7 +154,7 @@ public class ORemoteServerChannel {
   protected synchronized <T> T networkOperation(final byte operationId, final OStorageRemoteOperation<T> operation,
       final String errorMessage, final int maxRetry, final boolean autoReconnect) {
     Exception lastException = null;
-    for (int retry = 1; retry <= maxRetry; ++retry) {
+    for (int retry = 1; retry <= maxRetry && totalConsecutiveErrors < MAX_CONSECUTIVE_ERRORS; ++retry) {
       try {
         channel.setWaitResponseTimeout();
         channel.beginRequest(operationId, sessionId, sessionToken);
@@ -192,6 +205,9 @@ public class ORemoteServerChannel {
       }
     }
 
+    if (lastException == null)
+      handleNewError();
+
     throw OException.wrapException(new ODistributedException(errorMessage), lastException);
   }
 
@@ -219,7 +235,7 @@ public class ORemoteServerChannel {
         @Override
         public void run() {
           try {
-            manager.removeServer(server);
+            manager.removeServer(server, true);
           } catch (Throwable e) {
             ODistributedServerLog.warn(this, manager.getLocalNodeName(), server, ODistributedServerLog.DIRECTION.OUT,
                 "Error on removing server '%s' from the cluster", server);

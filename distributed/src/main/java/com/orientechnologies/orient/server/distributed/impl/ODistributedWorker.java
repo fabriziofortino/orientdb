@@ -24,16 +24,21 @@ import com.hazelcast.spi.exception.DistributedObjectDestroyedException;
 import com.orientechnologies.common.concur.OTimeoutException;
 import com.orientechnologies.common.concur.lock.OModificationOperationProhibitedException;
 import com.orientechnologies.common.log.OLogManager;
+import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.exception.OConfigurationException;
+import com.orientechnologies.orient.core.exception.OStorageException;
 import com.orientechnologies.orient.core.metadata.security.OSecurityUser;
 import com.orientechnologies.orient.core.metadata.security.OUser;
 import com.orientechnologies.orient.server.distributed.*;
 import com.orientechnologies.orient.server.distributed.ODistributedServerLog.DIRECTION;
+import com.orientechnologies.orient.server.distributed.task.ODistributedOperationException;
 import com.orientechnologies.orient.server.distributed.task.ORemoteTask;
 
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -52,13 +57,15 @@ public class ODistributedWorker extends Thread {
   protected final ArrayBlockingQueue<ODistributedRequest> localQueue;
   protected final int                                     id;
 
-  protected volatile ODatabaseDocumentTx                  database;
-  protected volatile OUser                                lastUser;
-  protected volatile boolean                              running              = true;
+  protected volatile ODatabaseDocumentTx database;
+  protected volatile OUser               lastUser;
+  protected volatile boolean running = true;
 
-  private AtomicLong                                      processedRequests    = new AtomicLong(0);
+  private AtomicLong    processedRequests     = new AtomicLong(0);
+  private AtomicBoolean waitingForNextRequest = new AtomicBoolean(true);
 
-  private static final long                               MAX_SHUTDOWN_TIMEOUT = 5000l;
+  private static final long MAX_SHUTDOWN_TIMEOUT = 5000l;
+  private volatile ODistributedRequest currentExecuting;
 
   public ODistributedWorker(final ODistributedDatabaseImpl iDistributed, final String iDatabaseName, final int i) {
     id = i;
@@ -72,13 +79,19 @@ public class ODistributedWorker extends Thread {
   }
 
   public void processRequest(final ODistributedRequest request) {
-    try {
-      localQueue.put(request);
-    } catch (InterruptedException e) {
-      ODistributedServerLog.warn(this, localNodeName, null, ODistributedServerLog.DIRECTION.NONE,
-          "Received interruption signal, closing distributed worker thread (worker=%d)", id);
+    if (!localQueue.offer(request)) {
+//    throw new ODistributedException(
+//        "Local queue for database '" + this.databaseName + "' is full, cannot process further requests");
+      ODistributedServerLog.info(this, manager.getLocalNodeName(), null, DIRECTION.NONE,
+          "Local queue for database '%s' is full, cannot process further requests", this.databaseName);
 
-      shutdown();
+      // BLOCK WAITING THE QUEUE IS NOT FULL
+      try {
+        localQueue.put(request);
+      } catch (InterruptedException e) {
+        // JUST RETURN
+        Thread.currentThread().interrupt();
+      }
     }
   }
 
@@ -90,11 +103,15 @@ public class ODistributedWorker extends Thread {
       try {
         message = readRequest();
 
+        currentExecuting = message;
+
         if (message != null) {
           message.getId();
           reqId = message.getId();
           onMessage(message);
         }
+
+        currentExecuting = null;
 
       } catch (InterruptedException e) {
         // EXIT CURRENT THREAD
@@ -107,12 +124,18 @@ public class ODistributedWorker extends Thread {
         Thread.currentThread().interrupt();
         break;
       } catch (Throwable e) {
-        if (e.getCause() instanceof InterruptedException)
-          Thread.currentThread().interrupt();
-        else
-          ODistributedServerLog.error(this, localNodeName, reqId != null ? manager.getNodeNameById(reqId.getNodeId()) : "?",
-              ODistributedServerLog.DIRECTION.IN, "Error on executing distributed request %s: (%s) worker=%d", e,
-              message != null ? message.getId() : -1, message != null ? message.getTask() : "-", id);
+        try {
+          if (e.getCause() instanceof InterruptedException)
+            Thread.currentThread().interrupt();
+          else
+            ODistributedServerLog.error(this, localNodeName, reqId != null ? manager.getNodeNameById(reqId.getNodeId()) : "?",
+                ODistributedServerLog.DIRECTION.IN, "Error on executing distributed request %s: (%s) worker=%d", e,
+                message != null ? message.getId() : -1, message != null ? message.getTask() : "-", id);
+        } catch (Throwable t) {
+          ODistributedServerLog.error(this, localNodeName, "?", ODistributedServerLog.DIRECTION.IN,
+              "Error on executing distributed request %s: (%s) worker=%d", e, message != null ? message.getId() : -1,
+              message != null ? message.getTask() : "-", id);
+        }
       }
     }
 
@@ -130,16 +153,14 @@ public class ODistributedWorker extends Thread {
           // OK
           break;
 
+        } catch (OStorageException e) {
+          // WAIT FOR A WHILE, THEN RETRY
+          if (!dbNotAvailable(retry))
+            return;
         } catch (OConfigurationException e) {
           // WAIT FOR A WHILE, THEN RETRY
-          try {
-            ODistributedServerLog.info(this, manager.getLocalNodeName(), null, DIRECTION.NONE,
-                "Database '%s' not present, waiting for it (retry=%d/%d)...", databaseName, retry, 100);
-            Thread.sleep(300);
-          } catch (InterruptedException e1) {
-            Thread.currentThread().interrupt();
+          if (!dbNotAvailable(retry))
             return;
-          }
         }
       }
 
@@ -152,9 +173,23 @@ public class ODistributedWorker extends Thread {
 
     } else if (database.isClosed()) {
       // DATABASE CLOSED, REOPEN IT
+      database.activateOnCurrentThread();
       database.close();
+      database.replaceStorage(Orient.instance().loadStorage(database.getURL()));
       manager.getServerInstance().openDatabase(database, "internal", "internal", null, true);
     }
+  }
+
+  protected boolean dbNotAvailable(int retry) {
+    try {
+      ODistributedServerLog.info(this, manager.getLocalNodeName(), null, DIRECTION.NONE,
+          "Database '%s' not present, waiting for it (retry=%d/%d)...", databaseName, retry, 100);
+      Thread.sleep(300);
+    } catch (InterruptedException e1) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+    return true;
   }
 
   public void shutdown() {
@@ -177,8 +212,9 @@ public class ODistributedWorker extends Thread {
               "Interrupted shutdown of distributed worker thread");
         }
 
-      ODistributedServerLog.debug(this, localNodeName, null, ODistributedServerLog.DIRECTION.NONE,
-          "Shutdown distributed worker '%s' completed", getName());
+      ODistributedServerLog
+          .debug(this, localNodeName, null, ODistributedServerLog.DIRECTION.NONE, "Shutdown distributed worker '%s' completed",
+              getName());
 
       localQueue.clear();
 
@@ -188,8 +224,9 @@ public class ODistributedWorker extends Thread {
       }
 
     } catch (Exception e) {
-      ODistributedServerLog.warn(this, localNodeName, null, ODistributedServerLog.DIRECTION.NONE,
-          "Error on shutting down distributed worker '%s'", e, getName());
+      ODistributedServerLog
+          .warn(this, localNodeName, null, ODistributedServerLog.DIRECTION.NONE, "Error on shutting down distributed worker '%s'",
+              e, getName());
 
     }
   }
@@ -201,27 +238,36 @@ public class ODistributedWorker extends Thread {
   protected ODistributedRequest readRequest() throws InterruptedException {
     // GET FROM DISTRIBUTED QUEUE. IF EMPTY WAIT FOR A MESSAGE
     ODistributedRequest req = nextMessage();
+    if (req == null)
+      return null;
 
     if (manager.isOffline())
       waitNodeIsOnline();
 
     if (ODistributedServerLog.isDebugEnabled()) {
       final String senderNodeName = manager.getNodeNameById(req.getId().getNodeId());
-      ODistributedServerLog.debug(this, localNodeName, senderNodeName, DIRECTION.IN,
-          "Processing request=(%s) sourceNode=%s worker=%d", req, senderNodeName, id);
+      ODistributedServerLog
+          .debug(this, localNodeName, senderNodeName, DIRECTION.IN, "Processing request=(%s) sourceNode=%s worker=%d", req,
+              senderNodeName, id);
     }
 
     return req;
   }
 
+  public boolean isWaitingForNextRequest() {
+    return waitingForNextRequest.get();
+  }
+
   protected ODistributedRequest nextMessage() throws InterruptedException {
-    final ODistributedRequest req = localQueue.take();
+    waitingForNextRequest.set(true);
+    final ODistributedRequest req = localQueue.poll(2000, TimeUnit.MILLISECONDS);
+    waitingForNextRequest.set(false);
     processedRequests.incrementAndGet();
     return req;
   }
 
   /**
-   * Execute the remote call on the local node and send back the result
+   * Executes the remote call on the local node and send back the result
    */
   protected void onMessage(final ODistributedRequest iRequest) {
     String senderNodeName = null;
@@ -250,17 +296,23 @@ public class ODistributedWorker extends Thread {
     final ORemoteTask task = iRequest.getTask();
 
     if (ODistributedServerLog.isDebugEnabled())
-      ODistributedServerLog.debug(this, localNodeName, senderNodeName, DIRECTION.IN, "Received request: (%s) (worker=%d)", iRequest,
-          id);
+      ODistributedServerLog
+          .debug(this, localNodeName, senderNodeName, DIRECTION.IN, "Received request: (%s) (worker=%d)", iRequest, id);
 
     // EXECUTE IT LOCALLY
-    Object responsePayload;
+    Object responsePayload = null;
     OSecurityUser origin = null;
     try {
-      task.setNodeSource(senderNodeName);
       waitNodeIsOnline();
-      if (task.isUsingDatabase())
+
+      distributed.waitIsReady(task);
+
+      if (task.isUsingDatabase()) {
         initDatabaseInstance();
+        if (database == null)
+          throw new ODistributedOperationException(
+              "Error on executing remote request because the database '" + databaseName + "' is not available");
+      }
 
       // keep original user in database, check the username passed in request and set new user in DB, after document saved,
       // reset to original user
@@ -268,8 +320,8 @@ public class ODistributedWorker extends Thread {
         database.activateOnCurrentThread();
         origin = database.getUser();
         try {
-          if (iRequest.getUserRID() != null && iRequest.getUserRID().isValid()
-              && (lastUser == null || !(lastUser.getIdentity()).equals(iRequest.getUserRID()))) {
+          if (iRequest.getUserRID() != null && iRequest.getUserRID().isValid() && (lastUser == null || !(lastUser.getIdentity())
+              .equals(iRequest.getUserRID()))) {
             lastUser = database.getMetadata().getSecurity().getUser(iRequest.getUserRID());
             database.setUser(lastUser);// set to new user
           } else
@@ -281,7 +333,7 @@ public class ODistributedWorker extends Thread {
       }
 
       // EXECUTE THE TASK
-      for (int retry = 1;; ++retry) {
+      for (int retry = 1; running; ++retry) {
         responsePayload = manager.executeOnLocalNode(iRequest.getId(), iRequest.getTask(), database);
 
         if (responsePayload instanceof OModificationOperationProhibitedException) {
@@ -296,8 +348,8 @@ public class ODistributedWorker extends Thread {
         } else {
           // OPERATION EXECUTED (OK OR ERROR), NO RETRY NEEDED
           if (retry > 1)
-            ODistributedServerLog.info(this, localNodeName, senderNodeName, DIRECTION.IN, "Request %s succeed after retry=%d",
-                iRequest, retry);
+            ODistributedServerLog
+                .info(this, localNodeName, senderNodeName, DIRECTION.IN, "Request %s succeed after retry=%d", iRequest, retry);
 
           break;
         }
@@ -305,7 +357,8 @@ public class ODistributedWorker extends Thread {
       }
 
     } catch (RuntimeException e) {
-      sendResponseBack(iRequest, e);
+      if (task.hasResponse())
+        sendResponseBack(iRequest, e);
       throw e;
 
     } finally {
@@ -320,7 +373,7 @@ public class ODistributedWorker extends Thread {
       }
     }
 
-    if (running)
+    if (task.hasResponse())
       sendResponseBack(iRequest, responsePayload);
   }
 
@@ -342,21 +395,24 @@ public class ODistributedWorker extends Thread {
 
     final String senderNodeName = manager.getNodeNameById(iRequest.getId().getNodeId());
 
-    final ODistributedResponse response = new ODistributedResponse(iRequest.getId(), localNodeName, senderNodeName,
+    final ODistributedResponse response = new ODistributedResponse(null, iRequest.getId(), localNodeName, senderNodeName,
         responsePayload);
 
+    // TODO: check if using remote channel for local node still makes sense
+    //    if (!senderNodeName.equalsIgnoreCase(manager.getLocalNodeName()))
     try {
       // GET THE SENDER'S RESPONSE QUEUE
       final ORemoteServerController remoteSenderServer = manager.getRemoteServer(senderNodeName);
 
-      ODistributedServerLog.debug(current, localNodeName, senderNodeName, ODistributedServerLog.DIRECTION.OUT,
-          "Sending response %s back", response);
+      ODistributedServerLog
+          .debug(current, localNodeName, senderNodeName, ODistributedServerLog.DIRECTION.OUT, "Sending response %s back (reqId=%s)",
+              response, iRequest);
 
       remoteSenderServer.sendResponse(response);
 
     } catch (Exception e) {
       ODistributedServerLog.debug(current, localNodeName, senderNodeName, ODistributedServerLog.DIRECTION.OUT,
-          "Error on sending response %s back", response);
+          "Error on sending response '%s' back (reqId=%s err=%s)", response, iRequest.getId(), e.toString());
     }
   }
 
@@ -367,7 +423,7 @@ public class ODistributedWorker extends Thread {
       for (int retry = 0; running; ++retry) {
         if (mgr != null && mgr.isOffline()) {
           // NODE NOT ONLINE YET, REFUSE THE CONNECTION
-          OLogManager.instance().info(this,
+          ODistributedServerLog.info(this, localNodeName, null, DIRECTION.NONE,
               "Node is not online yet (status=%s), blocking the command until it is online (retry=%d, queue=%d worker=%d)",
               mgr.getNodeStatus(), retry + 1, localQueue.size(), id);
 
@@ -391,5 +447,22 @@ public class ODistributedWorker extends Thread {
 
   public long getProcessedRequests() {
     return processedRequests.get();
+  }
+
+  public void reset() {
+    localQueue.clear();
+    if (database != null) {
+      database.activateOnCurrentThread();
+      database.close();
+      database = null;
+    }
+  }
+
+  public void sendShutdown() {
+    running = false;
+  }
+
+  public ODistributedRequest getProcessing() {
+    return currentExecuting;
   }
 }

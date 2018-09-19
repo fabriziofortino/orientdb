@@ -26,8 +26,8 @@ import com.orientechnologies.orient.core.sql.OCommandSQL;
  * Distributed test on drop database and further resync.
  */
 public class DistributedDbDropAndResyncTest extends AbstractServerClusterTxTest {
-  final static int SERVERS = 2;
-  final long       TIMEOUT = 15000;
+  private final static int SERVERS = 2;
+  private final long       TIMEOUT = 15000;
 
   @Test
   public void test() throws Exception {
@@ -44,7 +44,7 @@ public class DistributedDbDropAndResyncTest extends AbstractServerClusterTxTest 
       db.open("admin", "admin");
 
       banner("RE-SYNC DATABASE ON SERVER " + s.getServerId());
-      db.command(new OCommandSQL("ha sync database FULL_REPLACE")).execute();
+      db.command(new OCommandSQL("ha sync database")).execute();
 
       ODistributedServerManager.DB_STATUS currentStatus = null;
 

@@ -30,8 +30,10 @@ import com.orientechnologies.orient.core.engine.local.OEngineLocalPaginated;
 import com.orientechnologies.orient.core.index.OIndexDefinition;
 import com.orientechnologies.orient.core.metadata.OMetadataDefault;
 import com.orientechnologies.orient.core.serialization.serializer.record.binary.ORecordSerializerBinary;
+import com.orientechnologies.orient.core.storage.OChecksumMode;
 
 import java.io.PrintStream;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.logging.ConsoleHandler;
@@ -73,7 +75,7 @@ public enum OGlobalConfiguration {
       Boolean.class, true),
 
   DIRECT_MEMORY_TRACK_MODE("memory.directMemory.trackMode",
-      "Activates the direct memory pool leak detector. This detector causes a large overhead and should be used for debugging "
+      "Activates the direct memory pool [leak detector](Leak-Detector.md). This detector causes a large overhead and should be used for debugging "
           + "purposes only. It's also a good idea to pass the "
           + "-Djava.util.logging.manager=com.orientechnologies.common.log.OLogManager$DebugLogManager switch to the JVM, "
           + "if you use this mode, this will enable the logging from JVM shutdown hooks.", Boolean.class, false),
@@ -150,6 +152,14 @@ public enum OGlobalConfiguration {
   STORAGE_KEEP_DISK_CACHE_STATE("storage.diskCache.keepState",
       "Keep disk cache state between moment when storage is closed and moment when it is opened again. true by default",
       Boolean.class, true),
+
+  STORAGE_CHECKSUM_MODE("storage.diskCache.checksumMode", "Controls the per-page checksum storage and verification done by "
+      + "the file cache. Possible modes: 'off' – checksums are completely off; 'store' – checksums are calculated and stored "
+      + "on page flushes, no verification is done on page loads, stored checksums are verified only during user-initiated health "
+      + "checks; 'storeAndVerify' (default) – checksums are calculated and stored on page flushes, verification is performed on "
+      + "each page load, errors are reported in the log; 'storeAndThrow' – same as `storeAndVerify` with addition of exceptions "
+      + "thrown on errors, this mode is useful for debugging and testing, but should be avoided in a production environment.",
+      OChecksumMode.class, OChecksumMode.StoreAndVerify, false),
 
   STORAGE_CONFIGURATION_SYNC_ON_UPDATE("storage.configuration.syncOnUpdate",
       "Indicates a force sync should be performed for each update on the storage configuration", Boolean.class, true),
@@ -279,6 +289,9 @@ public enum OGlobalConfiguration {
       "This setting is used only for debug purposes. It creates a stack trace of methods, when an atomic operation is started",
       Boolean.class, false),
 
+  TX_PAGE_CACHE_SIZE("tx.pageCacheSize",
+      "The size of a per-transaction page cache in pages, 12 by default, 0 to disable the cache.", Integer.class, 12),
+
   // INDEX
   INDEX_EMBEDDED_TO_SBTREEBONSAI_THRESHOLD("index.embeddedToSbtreeBonsaiThreshold",
       "Amount of values, after which the index implementation will use an sbtree as a values container. Set to -1, to disable and force using an sbtree",
@@ -365,7 +378,7 @@ public enum OGlobalConfiguration {
   PREFER_SBTREE_SET("collections.preferSBTreeSet", "This configuration setting is experimental", Boolean.class, false),
 
   // FILE
-  TRACK_FILE_CLOSE("file.trackFileClose",
+  @Deprecated TRACK_FILE_CLOSE("file.trackFileClose",
       "Log all the cases when files are closed. This is needed only for internal debugging purposes", Boolean.class, false),
 
   FILE_LOCK("file.lock", "Locks files when used. Default is true", boolean.class, true),
@@ -390,7 +403,8 @@ public enum OGlobalConfiguration {
   NETWORK_MAX_CONCURRENT_SESSIONS("network.maxConcurrentSessions", "Maximum number of concurrent sessions", Integer.class, 1000,
       true),
 
-  NETWORK_SOCKET_BUFFER_SIZE("network.socketBufferSize", "TCP/IP Socket buffer size", Integer.class, 32768, true),
+  NETWORK_SOCKET_BUFFER_SIZE("network.socketBufferSize", "TCP/IP Socket buffer size, if 0 use the OS default", Integer.class, 0,
+      true),
 
   NETWORK_LOCK_TIMEOUT("network.lockTimeout", "Timeout (in ms) to acquire a lock against a channel", Integer.class, 15000, true),
 
@@ -435,7 +449,7 @@ public enum OGlobalConfiguration {
   NETWORK_HTTP_MAX_CONTENT_LENGTH("network.http.maxLength", "TCP/IP max content length (in bytes) for HTTP requests", Integer.class,
       1000000, true),
 
-  NETWORK_HTTP_STREAMING("network.http.streaming", "Enable Http chunked streaming for json responses", Boolean.class, true, true),
+  NETWORK_HTTP_STREAMING("network.http.streaming", "Enable Http chunked streaming for json responses", Boolean.class, false, true),
 
   NETWORK_HTTP_CONTENT_CHARSET("network.http.charset", "Http response charset", String.class, "utf-8", true),
 
@@ -449,9 +463,9 @@ public enum OGlobalConfiguration {
 
   NETWORK_HTTP_USE_TOKEN("network.http.useToken", "Enable Token based sessions for http", Boolean.class, false),
 
-  NETWORK_TOKEN_SECRETKEY("network.token.secretyKey", "Network token sercret key", String.class, ""),
+  NETWORK_TOKEN_SECRETKEY("network.token.secretKey", "Network token sercret key", String.class, ""),
 
-  NETWORK_TOKEN_ENCRIPTION_ALGORITHM("network.token.encriptionAlgorithm", "Network token algorithm", String.class, "HmacSHA256"),
+  NETWORK_TOKEN_ENCRYPTION_ALGORITHM("network.token.encryptionAlgorithm", "Network token algorithm", String.class, "HmacSHA256"),
 
   NETWORK_TOKEN_EXPIRE_TIMEOUT("network.token.expireTimeout",
       "Timeout, after which a binary session is considered to have expired (in minutes)", Integer.class, 60),
@@ -485,6 +499,11 @@ public enum OGlobalConfiguration {
   }),
 
   PROFILER_MAXVALUES("profiler.maxValues", "Maximum values to store. Values are managed in a LRU", Integer.class, 200),
+
+  PROFILER_MEMORYCHECK_INTERVAL("profiler.memoryCheckInterval",
+      "Checks the memory usage every configured milliseconds. Use 0 to disable it", Long.class, 120000),
+
+  // SEQUENCES
 
   SEQUENCE_MAX_RETRY("sequence.maxRetry", "Maximum number of retries between attempt to change a sequence in concurrent mode",
       Integer.class, 100),
@@ -568,6 +587,11 @@ public enum OGlobalConfiguration {
 
   QUERY_LIVE_SUPPORT("query.live.support", "Enable/Disable the support of live query. (Use false to disable)", Boolean.class, true),
 
+  QUERY_TIMEOUT_DEFAULT_STRATEGY("query.timeout.defaultStrategy", "Default timeout strategy for queries (can be RETURN or EXCEPTION)", String.class, "EXCEPTION"),
+
+  LUCENE_QUERY_PAGE_SIZE("lucene.query.pageSize",
+      "Size of the page when fetching data from a lucene index", Long.class, 10000,true),
+
   STATEMENT_CACHE_SIZE("statement.cacheSize", "Number of parsed SQL statements kept in cache", Integer.class, 100),
 
   // GRAPH
@@ -622,8 +646,17 @@ public enum OGlobalConfiguration {
 
   // DISTRIBUTED
 
+  /**
+   * @Since 2.2.18
+   */
+  DISTRIBUTED_DUMP_STATS_EVERY("distributed.dumpStatsEvery", "Time in ms to dump the cluster stats. Set to 0 to disable such dump",
+      Long.class, 0, true),
+
   DISTRIBUTED_CRUD_TASK_SYNCH_TIMEOUT("distributed.crudTaskTimeout", "Maximum timeout (in ms) to wait for CRUD remote tasks",
-      Long.class, 3000l, true),
+      Long.class, 10000l, true),
+
+  DISTRIBUTED_MAX_STARTUP_DELAY("distributed.maxStartupDelay", "Maximum delay time (in ms) to wait for a server to start",
+      Long.class, 10000l, true),
 
   DISTRIBUTED_COMMAND_TASK_SYNCH_TIMEOUT("distributed.commandTaskTimeout",
       "Maximum timeout (in ms) to wait for command distributed tasks", Long.class, 2 * 60 * 1000l, true),
@@ -659,7 +692,7 @@ public enum OGlobalConfiguration {
    * @Since 2.2.7
    */
   DISTRIBUTED_CONFLICT_RESOLVER_REPAIRER_CHAIN("distributed.conflictResolverRepairerChain",
-      "Chain of conflict resolver implementation to use", String.class, "majority,content,version", false),
+      "Chain of conflict resolver implementation to use", String.class, "quorum,content,majority,version", false),
 
   /**
    * @Since 2.2.7
@@ -670,8 +703,8 @@ public enum OGlobalConfiguration {
   /**
    * @Since 2.2.7
    */
-  DISTRIBUTED_CONFLICT_RESOLVER_REPAIRER_BATCH("distributed.conflictResolverRepairerBatch", "Number of record to repair in batch",
-      Integer.class, 100, true),
+  DISTRIBUTED_CONFLICT_RESOLVER_REPAIRER_BATCH("distributed.conflictResolverRepairerBatch",
+      "Maximum number of records to repair in batch", Integer.class, 50, true),
 
   /**
    * @Since 2.2.7
@@ -715,14 +748,14 @@ public enum OGlobalConfiguration {
    */
   DISTRIBUTED_AUTO_REMOVE_OFFLINE_SERVERS("distributed.autoRemoveOfflineServers",
       "This is the amount of time (in ms) the server has to be OFFLINE, before it is automatically removed from the distributed configuration. -1 = never, 0 = immediately, >0 the actual time to wait",
-      Long.class, -1),
+      Long.class, 0, true),
 
   /**
    * @Since 2.2.0
    */
   DISTRIBUTED_PUBLISH_NODE_STATUS_EVERY("distributed.publishNodeStatusEvery",
       "Time in ms to publish the node status on distributed map. Set to 0 to disable such refresh of node configuration",
-      Long.class, 5000l),
+      Long.class, 10000l, true),
 
   /**
    * @Since 2.2.0
@@ -747,8 +780,14 @@ public enum OGlobalConfiguration {
    * @Since 2.1.3
    */
   @OApi(maturity = OApi.MATURITY.NEW)DISTRIBUTED_BACKUP_DIRECTORY("distributed.backupDirectory",
-      "Directory where the copy of an existent database is saved, before it is downloaded from the cluster", String.class,
-      "../backup/databases"),
+      "Directory where the copy of an existent database is saved, before it is downloaded from the cluster. Leave it empty to avoid the backup.",
+      String.class, "../backup/databases"),
+
+  /**
+   * @Since 2.2.15
+   */
+  @OApi(maturity = OApi.MATURITY.NEW)DISTRIBUTED_BACKUP_TRY_INCREMENTAL_FIRST("distributed.backupTryIncrementalFirst",
+      "Try to execute an incremental backup first.", Boolean.class, true),
 
   /**
    * @Since 2.1
@@ -761,14 +800,14 @@ public enum OGlobalConfiguration {
    * @Since 2.2.7
    */
   @OApi(maturity = OApi.MATURITY.NEW)DISTRIBUTED_ATOMIC_LOCK_TIMEOUT("distributed.atomicLockTimeout",
-      "Timeout (in ms) to acquire a distributed lock on a record. (0=infinite)", Integer.class, 300, true),
+      "Timeout (in ms) to acquire a distributed lock on a record. (0=infinite)", Integer.class, 50, true),
 
   /**
    * @Since 2.1
    */
   @OApi(maturity = OApi.MATURITY.NEW)DISTRIBUTED_CONCURRENT_TX_AUTORETRY_DELAY("distributed.concurrentTxAutoRetryDelay",
       "Delay (in ms) between attempts on executing a distributed transaction, which had failed because of locked records. (0=no delay)",
-      Integer.class, 100, true),
+      Integer.class, 10, true),
 
   DB_DOCUMENT_SERIALIZER("db.document.serializer", "The default record serializer used by the document database", String.class,
       ORecordSerializerBinary.NAME),
@@ -796,6 +835,18 @@ public enum OGlobalConfiguration {
    */
   @OApi(maturity = OApi.MATURITY.NEW)CLIENT_CREDENTIAL_INTERCEPTOR("client.credentialinterceptor",
       "The name of the CredentialInterceptor class", String.class, null),
+
+  @OApi(maturity = OApi.MATURITY.NEW)CLIENT_CI_KEYALGORITHM("client.ci.keyalgorithm",
+      "The key algorithm used by the symmetric key credential interceptor", String.class, "AES"),
+
+  @OApi(maturity = OApi.MATURITY.NEW)CLIENT_CI_CIPHERTRANSFORM("client.ci.ciphertransform",
+      "The cipher transformation used by the symmetric key credential interceptor", String.class, "AES/CBC/PKCS5Padding"),
+
+  @OApi(maturity = OApi.MATURITY.NEW)CLIENT_CI_KEYSTORE_FILE("client.ci.keystore.file",
+      "The file path of the keystore used by the symmetric key credential interceptor", String.class, null),
+
+  @OApi(maturity = OApi.MATURITY.NEW)CLIENT_CI_KEYSTORE_PASSWORD("client.ci.keystore.password",
+      "The password of the keystore used by the symmetric key credential interceptor", String.class, null),
 
   /**
    * @Since 2.2
@@ -954,13 +1005,13 @@ public enum OGlobalConfiguration {
 
       if (!lastSection.equals(section)) {
         out.print("- ");
-        out.println(section.toUpperCase());
+        out.println(section.toUpperCase(Locale.ENGLISH));
         lastSection = section;
       }
       out.print("  + ");
       out.print(v.key);
       out.print(" = ");
-      out.println(v.isHidden() ? "<hidden>" : v.getValue());
+      out.println(v.isHidden() ? "<hidden>" : String.valueOf((Object) v.getValue()));
     }
   }
 
@@ -968,6 +1019,7 @@ public enum OGlobalConfiguration {
    * Find the OGlobalConfiguration instance by the key. Key is case insensitive.
    *
    * @param iKey Key to find. It's case insensitive.
+   *
    * @return OGlobalConfiguration instance if found, otherwise null
    */
   public static OGlobalConfiguration findByKey(final String iKey) {
@@ -1008,8 +1060,9 @@ public enum OGlobalConfiguration {
     }
   }
 
-  public Object getValue() {
-    return value != null ? value : defValue;
+  public <T> T getValue() {
+    //noinspection unchecked
+    return (T) (value != null ? value : defValue);
   }
 
   public void setValue(final Object iValue) {
@@ -1024,7 +1077,29 @@ public enum OGlobalConfiguration {
         value = Float.parseFloat(iValue.toString());
       else if (type == String.class)
         value = iValue.toString();
-      else
+      else if (type.isEnum()) {
+        boolean accepted = false;
+
+        if (type.isInstance(iValue)) {
+          value = iValue;
+          accepted = true;
+        } else if (iValue instanceof String) {
+          final String string = (String) iValue;
+
+          for (Object constant : type.getEnumConstants()) {
+            final Enum<?> enumConstant = (Enum<?>) constant;
+
+            if (enumConstant.name().equalsIgnoreCase(string)) {
+              value = enumConstant;
+              accepted = true;
+              break;
+            }
+          }
+        }
+
+        if (!accepted)
+          throw new IllegalArgumentException("Invalid value of `" + key + "` option.");
+      } else
         value = iValue;
 
     if (changeCallback != null) {

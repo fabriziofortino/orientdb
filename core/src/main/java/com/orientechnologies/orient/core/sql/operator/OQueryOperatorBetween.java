@@ -23,11 +23,7 @@ import com.orientechnologies.common.collection.OMultiValue;
 import com.orientechnologies.orient.core.command.OCommandContext;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.id.ORID;
-import com.orientechnologies.orient.core.index.OCompositeIndexDefinition;
-import com.orientechnologies.orient.core.index.OIndex;
-import com.orientechnologies.orient.core.index.OIndexCursor;
-import com.orientechnologies.orient.core.index.OIndexDefinition;
-import com.orientechnologies.orient.core.index.OIndexInternal;
+import com.orientechnologies.orient.core.index.*;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocumentHelper;
 import com.orientechnologies.orient.core.sql.OSQLHelper;
@@ -41,9 +37,8 @@ import java.util.List;
 
 /**
  * BETWEEN operator.
- * 
+ *
  * @author Luca Garulli
- * 
  */
 public class OQueryOperatorBetween extends OQueryOperatorEqualityNotNulls {
   private boolean leftInclusive  = true;
@@ -77,16 +72,31 @@ public class OQueryOperatorBetween extends OQueryOperatorEqualityNotNulls {
 
     final Iterator<?> valueIterator = OMultiValue.getMultiValueIterator(right, false);
 
-    final Object right1 = OType.convert(valueIterator.next(), left.getClass());
-    if (right1 == null)
-      return false;
+    Object right1 = valueIterator.next();
     valueIterator.next();
-    final Object right2 = OType.convert(valueIterator.next(), left.getClass());
-    if (right2 == null)
+    Object right2 = valueIterator.next();
+    final Object right1c = OType.convert(right1, left.getClass());
+    if (right1c == null)
       return false;
 
-    final int leftResult = ((Comparable<Object>) left).compareTo(right1);
-    final int rightResult = ((Comparable<Object>) left).compareTo(right2);
+    final Object right2c = OType.convert(right2, left.getClass());
+    if (right2c == null)
+      return false;
+
+    final int leftResult;
+    if (left instanceof Number && right1 instanceof Number) {
+      Number[] conv = OType.castComparableNumber((Number) left, (Number) right1);
+      leftResult = ((Comparable) conv[0]).compareTo(conv[1]);
+    } else {
+      leftResult = ((Comparable<Object>) left).compareTo(right1c);
+    }
+    final int rightResult;
+    if (left instanceof Number && right2 instanceof Number) {
+      Number[] conv = OType.castComparableNumber((Number) left, (Number) right2);
+      rightResult = ((Comparable) conv[0]).compareTo(conv[1]);
+    } else {
+      rightResult = ((Comparable<Object>) left).compareTo(right2c);
+    }
 
     return (leftInclusive ? leftResult >= 0 : leftResult > 0) && (rightInclusive ? rightResult <= 0 : rightResult < 0);
   }
@@ -122,8 +132,16 @@ public class OQueryOperatorBetween extends OQueryOperatorEqualityNotNulls {
     if (indexDefinition.getParamCount() == 1) {
       final Object[] betweenKeys = (Object[]) keyParams.get(0);
 
-      final Object keyOne = indexDefinition.createValue(Collections.singletonList(OSQLHelper.getValue(betweenKeys[0])));
-      final Object keyTwo = indexDefinition.createValue(Collections.singletonList(OSQLHelper.getValue(betweenKeys[2])));
+      final Object keyOne;
+      final Object keyTwo;
+
+      if (indexDefinition instanceof OIndexDefinitionMultiValue) {
+        keyOne = ((OIndexDefinitionMultiValue) indexDefinition).createSingleValue(OSQLHelper.getValue(betweenKeys[0]));
+        keyTwo = ((OIndexDefinitionMultiValue) indexDefinition).createSingleValue(OSQLHelper.getValue(betweenKeys[2]));
+      } else {
+        keyOne = indexDefinition.createValue(Collections.singletonList(OSQLHelper.getValue(betweenKeys[0])));
+        keyTwo = indexDefinition.createValue(Collections.singletonList(OSQLHelper.getValue(betweenKeys[2])));
+      }
 
       if (keyOne == null || keyTwo == null)
         return null;

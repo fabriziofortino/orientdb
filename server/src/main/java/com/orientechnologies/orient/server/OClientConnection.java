@@ -42,18 +42,19 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class OClientConnection {
-  private final int                            id;
-  private final long                           since;
-  private Set<ONetworkProtocol>                protocols = Collections.newSetFromMap(new WeakHashMap<ONetworkProtocol, Boolean>());
-  private volatile ONetworkProtocol            protocol;
-  private volatile ODatabaseDocumentInternal   database;
-  private volatile OServerUserConfiguration    serverUser;
-  private ONetworkProtocolData                 data      = new ONetworkProtocolData();
-  private OClientConnectionStats               stats     = new OClientConnectionStats();
-  private Lock                                 lock      = new ReentrantLock();
-  private Boolean                              tokenBased;
-  private byte[]                               tokenBytes;
-  private OToken                               token;
+  private final int                          id;
+  private final long                         since;
+  private Set<ONetworkProtocol>              protocols = Collections.newSetFromMap(new WeakHashMap<ONetworkProtocol, Boolean>());
+  private volatile ONetworkProtocol          protocol;
+  private volatile ODatabaseDocumentInternal database;
+  private volatile OServerUserConfiguration  serverUser;
+  private ONetworkProtocolData               data      = new ONetworkProtocolData();
+  private OClientConnectionStats             stats     = new OClientConnectionStats();
+  private Lock                               lock      = new ReentrantLock();
+  private Boolean                            tokenBased;
+  private byte[]                             tokenBytes;
+  private OToken                             token;
+  private boolean                            disconnectOnAfter;
 
   public OClientConnection(final int id, final ONetworkProtocol protocol) throws IOException {
     this.id = id;
@@ -159,7 +160,7 @@ public class OClientConnection {
     } else {
       //IF the byte from the network are the same of the one i have a don't check them
       if (tokenBytes != null && tokenBytes.length > 0) {
-        if (tokenBytes.equals(tokenFromNetwork)) // SAME SESSION AND TOKEN DO
+        if (Arrays.equals(tokenBytes, tokenFromNetwork)) // SAME SESSION AND TOKEN DO
           return;
       }
       
@@ -172,10 +173,12 @@ public class OClientConnection {
       }
       if (token == null || !token.getIsVerified()) {
         cleanSession();
+        protocol.getServer().getClientConnectionManager().disconnect(this);
         throw new OTokenSecurityException("The token provided is not a valid token, signature does not match");
       }
       if (!handler.validateBinaryToken(token)) {
         cleanSession();
+        protocol.getServer().getClientConnectionManager().disconnect(this);
         throw new OTokenSecurityException("The token provided is expired");
       }
       if (tokenBased == null) {
@@ -196,6 +199,7 @@ public class OClientConnection {
     }
     database = null;
     protocols.clear();
+    
   }
 
   public void endOperation() {
@@ -307,5 +311,13 @@ public class OClientConnection {
     data.commandInfo = "Listening";
     data.commandDetail = "-";
     stats.lastCommandReceived = System.currentTimeMillis();
+  }
+  
+  public void setDisconnectOnAfter(boolean disconnectOnAfter) {
+    this.disconnectOnAfter = disconnectOnAfter;
+  }
+  
+  public boolean isDisconnectOnAfter() {
+    return disconnectOnAfter;
   }
 }

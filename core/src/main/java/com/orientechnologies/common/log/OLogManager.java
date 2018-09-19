@@ -107,7 +107,9 @@ public class OLogManager {
       }
 
       final String requesterName;
-      if (iRequester != null) {
+      if (iRequester instanceof Class<?>) {
+        requesterName = ((Class<?>) iRequester).getName();
+      } else if (iRequester != null) {
         requesterName = iRequester.getClass().getName();
       } else {
         requesterName = DEFAULT_LOG;
@@ -300,8 +302,14 @@ public class OLogManager {
    * Shutdowns this log manager.
    */
   public void shutdown() {
-    if (LogManager.getLogManager() instanceof DebugLogManager)
-      ((DebugLogManager) LogManager.getLogManager()).shutdown();
+    try {
+      if (LogManager.getLogManager() instanceof DebugLogManager)
+        ((DebugLogManager) LogManager.getLogManager()).shutdown();
+    } catch (NoClassDefFoundError e) {
+      // Om nom nom. Some custom class loaders, like Tomcat's one, cannot load classes while in shutdown hooks, since their
+      // runtime is already shutdown. Ignoring the exception, if DebugLogManager is not loaded at this point there are no instances
+      // of it anyway and we have nothing to shutdown.
+    }
   }
 
   /**

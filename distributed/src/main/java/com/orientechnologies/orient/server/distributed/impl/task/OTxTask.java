@@ -19,6 +19,7 @@
  */
 package com.orientechnologies.orient.server.distributed.impl.task;
 
+import com.orientechnologies.common.collection.OMultiValue;
 import com.orientechnologies.common.concur.ONeedRetryException;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
@@ -47,21 +48,24 @@ import java.util.List;
 public class OTxTask extends OAbstract2pcTask {
   public static final int FACTORYID = 7;
 
+  transient ODistributedTxContext reqContext;
+
   public OTxTask() {
   }
 
   @Override
   public Object execute(final ODistributedRequestId requestId, final OServer iServer, ODistributedServerManager iManager,
       final ODatabaseDocumentInternal database) throws Exception {
-    ODistributedServerLog.debug(this, iManager.getLocalNodeName(), getNodeSource(), DIRECTION.IN,
-        "Committing transaction db=%s (reqId=%s)...", database.getName(), requestId);
+    ODistributedServerLog
+        .debug(this, iManager.getLocalNodeName(), getNodeSource(), DIRECTION.IN, "Executing transaction db=%s (reqId=%s)...",
+            database.getName(), requestId);
 
     ODatabaseRecordThreadLocal.INSTANCE.set(database);
 
     final ODistributedDatabase ddb = iManager.getMessageService().getDatabase(database.getName());
 
-    // CREATE A CONTEXT OF TX
-    final ODistributedTxContext reqContext = ddb.registerTxContext(requestId);
+    // CREATE A CONTEXT OF TX. IT WILL BE CLOSED BY 2PC MESSAGE
+    reqContext = ddb.registerTxContext(requestId);
 
     final ODistributedConfiguration dCfg = iManager.getDatabaseConfiguration(database.getName());
 
@@ -87,8 +91,8 @@ public class OTxTask extends OAbstract2pcTask {
               continue;
           }
 
-          final int clId = createRT.clusterId > -1 ? createRT.clusterId
-              : createRT.getRid().isValid() ? createRT.getRid().getClusterId() : -1;
+          final int clId =
+              createRT.clusterId > -1 ? createRT.clusterId : createRT.getRid().isValid() ? createRT.getRid().getClusterId() : -1;
           final String clusterName = clId > -1 ? database.getClusterNameById(clId) : null;
 
           if (dCfg.isServerContainingCluster(iManager.getLocalNodeName(), clusterName))
@@ -119,7 +123,7 @@ public class OTxTask extends OAbstract2pcTask {
 
           taskResult = task.execute(requestId, iServer, iManager, database);
 
-          reqContext.addUndoTask(task.getUndoTask(requestId));
+          reqContext.addUndoTask(task.getUndoTask(iManager, requestId, OMultiValue.getSingletonList(iManager.getLocalNodeName())));
         }
 
         result.results.add(taskResult);
@@ -127,36 +131,31 @@ public class OTxTask extends OAbstract2pcTask {
 
       database.commit();
 
-      // SEND BACK CHANGED VALUE TO UPDATE
-      for (int i = 0; i < result.results.size(); ++i) {
-        final Object currentResult = result.results.get(i);
-
-        if (currentResult == NON_LOCAL_CLUSTER)
-          // SKIP IT
-          continue;
-
+      // LOCK NEW RECORDS BECAUSE ONLY AFTER COMMIT THE RID IS AVAILABLE
+      for (int i = 0; i < tasks.size(); ++i) {
         final OAbstractRecordReplicatedTask task = tasks.get(i);
-        if (task instanceof OCreateRecordTask) {
-          // SEND RID + VERSION
-          final OCreateRecordTask t = (OCreateRecordTask) task;
-          result.results.set(i, new OPlaceholder(t.getRecord()));
-        } else if (task instanceof OUpdateRecordTask) {
-          // SEND VERSION
-          result.results.set(i, task.getRecord().getVersion());
-        }
-      }
 
-      return result;
+        if (task instanceof OCreateRecordTask)
+          // LOCK THE NEW CREATED RECORD RIGHT AFTER HAVING THE RID
+          reqContext.lock(((OPlaceholder) result.results.get(i)).getIdentity(), getRecordLock());
+      }
 
     } catch (Throwable e) {
       // if (e instanceof ODistributedRecordLockedException)
       // ddb.dumpLocks();
       ODistributedServerLog.debug(this, iManager.getLocalNodeName(), getNodeSource(), DIRECTION.IN,
-          "Rolling back transaction db=%s (reqId=%s error=%s)...", database.getName(), requestId, e);
+          "Rolling back transaction on local server db=%s (reqId=%s error=%s)...", database.getName(), requestId, e);
 
       database.rollback();
-      // ddb.popTxContext(requestId);
-      reqContext.unlock();
+
+      // KEEP THE LOCKS WAITING FOR THE FINAL MSG FROM THE COORDINATOR
+
+//      // REMOVE THE CONTEXT
+//      ddb.popTxContext(requestId);
+//      reqContext.destroy();
+
+      // ALREADY ROLLED BACK (ON STORAGE), REMOVE UNDO TASKS
+      reqContext.clearUndo();
 
       if (!(e instanceof ONeedRetryException || e instanceof OTransactionException || e instanceof ORecordDuplicatedException
           || e instanceof ORecordNotFoundException))
@@ -164,10 +163,28 @@ public class OTxTask extends OAbstract2pcTask {
         ODistributedServerLog.info(this, getNodeSource(), null, DIRECTION.NONE, "Error on distributed transaction commit", e);
 
       return e;
-    } finally {
-      ODistributedServerLog.debug(this, iManager.getLocalNodeName(), getNodeSource(), DIRECTION.IN,
-          "Transaction completed db=%s (reqId=%s)...", database.getName(), requestId);
     }
+
+    // SEND BACK CHANGED VALUE TO UPDATE
+    for (int i = 0; i < result.results.size(); ++i) {
+      final Object currentResult = result.results.get(i);
+
+      if (currentResult == NON_LOCAL_CLUSTER)
+        // SKIP IT
+        continue;
+
+      final OAbstractRecordReplicatedTask task = tasks.get(i);
+      if (task instanceof OCreateRecordTask) {
+        // SEND RID + VERSION
+        final OCreateRecordTask t = (OCreateRecordTask) task;
+        result.results.set(i, new OPlaceholder(t.getRecord()));
+      } else if (task instanceof OUpdateRecordTask) {
+        // SEND VERSION
+        result.results.set(i, task.getRecord().getVersion());
+      }
+    }
+
+    return result;
   }
 
   protected long getRecordLock() {
@@ -182,5 +199,14 @@ public class OTxTask extends OAbstract2pcTask {
   @Override
   public int getFactoryId() {
     return FACTORYID;
+  }
+
+  public List<ORecordId> getInvolvedRecords() {
+    final List<ORecordId> list = new ArrayList<ORecordId>();
+    for (OAbstractRecordReplicatedTask t : tasks) {
+      if (t.getRid() != null)
+        list.add(t.getRid());
+    }
+    return list;
   }
 }

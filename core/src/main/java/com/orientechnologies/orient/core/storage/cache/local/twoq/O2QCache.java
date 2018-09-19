@@ -20,16 +20,14 @@
 
 package com.orientechnologies.orient.core.storage.cache.local.twoq;
 
-import com.orientechnologies.common.concur.lock.ODistributedCounter;
-import com.orientechnologies.common.concur.lock.OInterruptedException;
-import com.orientechnologies.common.concur.lock.OPartitionedLockManager;
-import com.orientechnologies.common.concur.lock.OReadersWriterSpinLock;
+import com.orientechnologies.common.concur.lock.*;
 import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.common.types.OModifiableBoolean;
 import com.orientechnologies.common.util.OPair;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.exception.OAllCacheEntriesAreUsedException;
+import com.orientechnologies.orient.core.exception.OLoadCacheStateException;
 import com.orientechnologies.orient.core.exception.OReadCacheException;
 import com.orientechnologies.orient.core.exception.OStorageException;
 import com.orientechnologies.orient.core.storage.cache.*;
@@ -43,6 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 
@@ -87,12 +86,7 @@ public class O2QCache implements OReadCache {
   /**
    * Counts how much time we warned user that limit of amount of pinned pages is reached.
    */
-  private final ODistributedCounter pinnedPagesWarningCounter = new ODistributedCounter();
-
-  /**
-   * Cache of value which is contained inside of {@link #pinnedPagesWarningCounter}. It is used to speed up calculation of warnings.
-   */
-  private volatile int pinnedPagesWarningsCache = 0;
+  private final AtomicInteger pinnedPagesWarningCounter = new AtomicInteger();
 
   private final AtomicReference<MemoryData> memoryDataContainer = new AtomicReference<MemoryData>();
 
@@ -109,8 +103,8 @@ public class O2QCache implements OReadCache {
   private final int percentOfPinnedPages;
 
   private final OReadersWriterSpinLock                 cacheLock       = new OReadersWriterSpinLock();
-  private final OPartitionedLockManager                fileLockManager = new OPartitionedLockManager(true);
-  private final OPartitionedLockManager<PageKey>       pageLockManager = new OPartitionedLockManager<PageKey>();
+  private final OLockManager                           fileLockManager = new OPartitionedLockManager(true);
+  private final OLockManager<PageKey>                  pageLockManager = new OPartitionedLockManager<PageKey>();
   private final ConcurrentMap<PinnedPage, OCacheEntry> pinnedPages     = new ConcurrentHashMap<PinnedPage, OCacheEntry>();
 
   private final AtomicBoolean coldPagesRemovalInProgress = new AtomicBoolean();
@@ -120,6 +114,7 @@ public class O2QCache implements OReadCache {
    * @param pageSize             Cache page size in bytes.
    * @param checkMinSize         If this flat is set size of cache may be {@link #MIN_CACHE_SIZE} or bigger.
    * @param percentOfPinnedPages Maximum percent of pinned pages which may be hold by this cache.
+   *
    * @see #MAX_PERCENT_OF_PINED_PAGES
    */
   public O2QCache(final long readCacheMaxMemory, final int pageSize, final boolean checkMinSize, final int percentOfPinnedPages) {
@@ -204,16 +199,13 @@ public class O2QCache implements OReadCache {
     MemoryData memoryData = memoryDataContainer.get();
 
     if ((100 * (memoryData.pinnedPages + 1)) / memoryData.maxSize > percentOfPinnedPages) {
-      if (pinnedPagesWarningsCache < MAX_PERCENT_OF_PINED_PAGES) {
-        pinnedPagesWarningCounter.increment();
+      if (pinnedPagesWarningCounter.get() < MAX_AMOUNT_OF_WARNINGS_PINNED_PAGES) {
 
-        final long warnings = pinnedPagesWarningCounter.get();
-        if (warnings < MAX_PERCENT_OF_PINED_PAGES) {
-          pinnedPagesWarningsCache = (int) warnings;
-
-          OLogManager.instance().warn(this, "Maximum amount of pinned pages is reached , given page " + cacheEntry
-              + " will not be marked as pinned which may lead to performance degradation. You may consider to increase percent of pined pages "
-              + "by changing of property " + OGlobalConfiguration.DISK_CACHE_PINNED_PAGES.getKey());
+        final long warnings = pinnedPagesWarningCounter.incrementAndGet();
+        if (warnings < MAX_AMOUNT_OF_WARNINGS_PINNED_PAGES) {
+          OLogManager.instance().warn(this, "Maximum amount of pinned pages is reached, given page " + cacheEntry
+              + " will not be marked as pinned which may lead to performance degradation. You may consider to increase the percent of pinned pages "
+              + "by changing the property '" + OGlobalConfiguration.DISK_CACHE_PINNED_PAGES.getKey() + "'");
         }
       }
 
@@ -223,16 +215,17 @@ public class O2QCache implements OReadCache {
     cacheLock.acquireReadLock();
     try {
       fileLock = fileLockManager.acquireSharedLock(cacheEntry.getFileId());
+      final PageKey k = new PageKey(cacheEntry.getFileId(), cacheEntry.getPageIndex());
       try {
-        pageLock = pageLockManager.acquireExclusiveLock(new PageKey(cacheEntry.getFileId(), cacheEntry.getPageIndex()));
+        pageLock = pageLockManager.acquireExclusiveLock(k);
         try {
           remove(cacheEntry.getFileId(), cacheEntry.getPageIndex());
           pinnedPages.put(new PinnedPage(cacheEntry.getFileId(), cacheEntry.getPageIndex()), cacheEntry);
         } finally {
-          pageLockManager.releaseLock(pageLock);
+          pageLock.unlock();
         }
       } finally {
-        fileLockManager.releaseLock(fileLock);
+        fileLock.unlock();
       }
     } finally {
       cacheLock.releaseReadLock();
@@ -253,6 +246,7 @@ public class O2QCache implements OReadCache {
    * in parameter is much less than current amount of memory.
    *
    * @param readCacheMaxMemory New maximum size of cache in bytes.
+   *
    * @throws IllegalStateException In case of new size of disk cache is too small to hold existing pinned pages.
    */
   public void changeMaximumAmountOfMemory(final long readCacheMaxMemory) throws IllegalStateException {
@@ -283,7 +277,7 @@ public class O2QCache implements OReadCache {
 
   @Override
   public OCacheEntry load(long fileId, final long pageIndex, final boolean checkPinnedPages, OWriteCache writeCache,
-      final int pageCount) throws IOException {
+      final int pageCount, boolean verifyChecksums) throws IOException {
 
     final OSessionStoragePerformanceStatistic sessionStoragePerformanceStatistic = writeCache.getPerformanceStatisticManager()
         .getSessionPerformanceStatistic();
@@ -296,7 +290,7 @@ public class O2QCache implements OReadCache {
       fileId = OAbstractWriteCache.checkFileIdCompatibility(writeCache.getId(), fileId);
 
       final UpdateCacheResult cacheResult = doLoad(fileId, pageIndex, checkPinnedPages, false, writeCache, pageCount,
-          sessionStoragePerformanceStatistic);
+          sessionStoragePerformanceStatistic, verifyChecksums);
       if (cacheResult == null)
         return null;
 
@@ -319,8 +313,8 @@ public class O2QCache implements OReadCache {
   }
 
   private UpdateCacheResult doLoad(long fileId, long pageIndex, boolean checkPinnedPages, boolean addNewPages,
-      OWriteCache writeCache, final int pageCount, final OSessionStoragePerformanceStatistic sessionStoragePerformanceStatistic)
-      throws IOException {
+      OWriteCache writeCache, final int pageCount, final OSessionStoragePerformanceStatistic sessionStoragePerformanceStatistic,
+      boolean verifyChecksums) throws IOException {
 
     if (pageCount < 1)
       throw new IllegalArgumentException(
@@ -350,7 +344,8 @@ public class O2QCache implements OReadCache {
             cacheEntry = pinnedPages.get(new PinnedPage(fileId, pageIndex));
 
           if (cacheEntry == null) {
-            UpdateCacheResult cacheResult = updateCache(fileId, pageIndex, addNewPages, writeCache, pageCount, cacheHit);
+            UpdateCacheResult cacheResult = updateCache(fileId, pageIndex, addNewPages, writeCache, pageCount, cacheHit,
+                verifyChecksums);
             if (cacheResult == null)
               return null;
 
@@ -367,7 +362,7 @@ public class O2QCache implements OReadCache {
           }
         }
       } finally {
-        fileLockManager.releaseLock(fileLock);
+        fileLockManager.releaseSharedLock(fileId);
       }
     } finally {
       cacheLock.releaseReadLock();
@@ -380,7 +375,7 @@ public class O2QCache implements OReadCache {
   }
 
   @Override
-  public OCacheEntry allocateNewPage(long fileId, OWriteCache writeCache) throws IOException {
+  public OCacheEntry allocateNewPage(long fileId, OWriteCache writeCache, boolean verifyChecksums) throws IOException {
     final OSessionStoragePerformanceStatistic sessionStoragePerformanceStatistic = writeCache.getPerformanceStatisticManager()
         .getSessionPerformanceStatistic();
 
@@ -400,9 +395,9 @@ public class O2QCache implements OReadCache {
         try {
           final long filledUpTo = writeCache.getFilledUpTo(fileId);
           assert filledUpTo >= 0;
-          cacheResult = doLoad(fileId, filledUpTo, false, true, writeCache, 1, sessionStoragePerformanceStatistic);
+          cacheResult = doLoad(fileId, filledUpTo, false, true, writeCache, 1, sessionStoragePerformanceStatistic, verifyChecksums);
         } finally {
-          fileLockManager.releaseLock(fileLock);
+          fileLockManager.releaseExclusiveLock(fileId);
         }
       } finally {
         cacheLock.releaseReadLock();
@@ -438,7 +433,8 @@ public class O2QCache implements OReadCache {
     try {
       fileLock = fileLockManager.acquireSharedLock(cacheEntry.getFileId());
       try {
-        pageLock = pageLockManager.acquireExclusiveLock(new PageKey(cacheEntry.getFileId(), cacheEntry.getPageIndex()));
+        final PageKey k = new PageKey(cacheEntry.getFileId(), cacheEntry.getPageIndex());
+        pageLock = pageLockManager.acquireExclusiveLock(k);
         try {
           cacheEntry.decrementUsages();
 
@@ -464,10 +460,10 @@ public class O2QCache implements OReadCache {
             cacheEntry.clearDirty();
           }
         } finally {
-          pageLockManager.releaseLock(pageLock);
+          pageLockManager.releaseExclusiveLock(k);
         }
       } finally {
-        fileLockManager.releaseLock(fileLock);
+        fileLockManager.releaseSharedLock(cacheEntry.getFileId());
       }
     } finally {
       cacheLock.releaseReadLock();
@@ -477,7 +473,6 @@ public class O2QCache implements OReadCache {
       try {
         flushFuture.get();
       } catch (InterruptedException e) {
-        Thread.interrupted();
         throw new OInterruptedException("File flush was interrupted");
       } catch (Exception e) {
         throw OException.wrapException(new OReadCacheException("File flush was abnormally terminated"), e);
@@ -508,7 +503,7 @@ public class O2QCache implements OReadCache {
 
         clearFile(fileId);
       } finally {
-        fileLockManager.releaseLock(fileLock);
+        fileLockManager.releaseExclusiveLock(fileId);
       }
     } finally {
       cacheLock.releaseReadLock();
@@ -576,7 +571,7 @@ public class O2QCache implements OReadCache {
         clearFile(fileId);
 
       } finally {
-        fileLockManager.releaseLock(fileLock);
+        fileLockManager.releaseExclusiveLock(fileId);
       }
 
     } finally {
@@ -598,7 +593,7 @@ public class O2QCache implements OReadCache {
         filePages.remove(fileId);
         writeCache.deleteFile(fileId);
       } finally {
-        fileLockManager.releaseLock(fileLock);
+        fileLockManager.releaseExclusiveLock(fileId);
       }
     } finally {
       cacheLock.releaseReadLock();
@@ -639,6 +634,7 @@ public class O2QCache implements OReadCache {
    * If maximum size of cache was decreased cache state will not be restored.
    *
    * @param writeCache Write cache is used to load pages back into cache if needed.
+   *
    * @see #closeStorage(OWriteCache)
    */
   public void loadCacheState(final OWriteCache writeCache) {
@@ -646,7 +642,7 @@ public class O2QCache implements OReadCache {
       return;
     }
 
-    cacheLock.acquireReadLock();
+    cacheLock.acquireWriteLock();
     try {
       final File rootDirectory = writeCache.getRootDirectory();
       final File stateFile = new File(rootDirectory, CACHE_STATE_FILE);
@@ -663,7 +659,7 @@ public class O2QCache implements OReadCache {
             final long currentMaxCacheSize = memoryDataContainer.get().maxSize;
 
             if (maxCacheSize > currentMaxCacheSize) {
-              OLogManager.instance().error(this,
+              OLogManager.instance().info(this,
                   "Previous maximum cache size was %d current maximum cache size is %d. Cache state for storage %s will not be restored.",
                   maxCacheSize, currentMaxCacheSize, rootDirectory);
               return;
@@ -680,12 +676,15 @@ public class O2QCache implements OReadCache {
         } finally {
           cacheState.close();
         }
+
       }
+    } catch (OLoadCacheStateException lcse) {
+      OLogManager.instance().warn(this, "Cannot restore state of cache for storage placed under " + writeCache.getRootDirectory());
     } catch (Exception e) {
-      OLogManager.instance()
-          .error(this, "Cannot restore state of cache for storage placed under %s", writeCache.getRootDirectory(), e);
+      throw OException.wrapException(
+          new OStorageException("Cannot restore state of cache for storage placed under " + writeCache.getRootDirectory()), e);
     } finally {
-      cacheLock.releaseReadLock();
+      cacheLock.releaseWriteLock();
     }
   }
 
@@ -727,31 +726,49 @@ public class O2QCache implements OReadCache {
    */
   private void restoreQueueWithoutPageLoad(OWriteCache writeCache, LRUList queue, DataInputStream dataInputStream)
       throws IOException {
-    // used only for statistics, and there is passed merely as stub
-    final OModifiableBoolean cacheHit = new OModifiableBoolean();
 
-    int internalFileId = dataInputStream.readInt();
-    while (internalFileId >= 0) {
-      final long pageIndex = dataInputStream.readLong();
-      try {
-        final long fileId = writeCache.externalFileId(internalFileId);
-        final OCacheEntry cacheEntry = new OCacheEntry(fileId, pageIndex, null, false);
+    //this set is only needed to rollback changes in case of IO Exception
+    final Set<PageKey> addedPages = new HashSet<PageKey>();
 
-        Set<Long> pages = filePages.get(fileId);
-        if (pages == null) {
-          pages = new HashSet<Long>();
+    try {
+      int internalFileId = dataInputStream.readInt();
 
-          Set<Long> op = filePages.putIfAbsent(fileId, pages);
-          if (op != null) {
-            pages = op;
+      while (internalFileId >= 0) {
+        final long pageIndex = dataInputStream.readLong();
+        try {
+          final long fileId = writeCache.externalFileId(internalFileId);
+          if (get(fileId, pageIndex, true) == null && !pinnedPages.containsKey(new PinnedPage(fileId, pageIndex))) {
+            final OCacheEntry cacheEntry = new OCacheEntry(fileId, pageIndex, null, false);
+
+            Set<Long> pages = filePages.get(fileId);
+            if (pages == null) {
+              pages = new HashSet<Long>();
+
+              Set<Long> op = filePages.putIfAbsent(fileId, pages);
+              if (op != null) {
+                pages = op;
+              }
+            }
+
+            queue.putToMRU(cacheEntry);
+            pages.add(cacheEntry.getPageIndex());
+
+            addedPages.add(new PageKey(fileId, pageIndex));
+            removeColdPagesWithCacheLock();
           }
+        } finally {
+          internalFileId = dataInputStream.readInt();
         }
-
-        queue.putToMRU(cacheEntry);
-        pages.add(cacheEntry.getPageIndex());
-      } finally {
-        internalFileId = dataInputStream.readInt();
       }
+    } catch (IOException e) {
+      for (PageKey pageKey : addedPages) {
+        queue.remove(pageKey.fileId, pageKey.pageIndex);
+
+        final Set<Long> pages = filePages.get(pageKey.fileId);
+        pages.remove(pageKey.pageIndex);
+      }
+
+      throw OException.wrapException(new OLoadCacheStateException("Can not restore state of cache from file"), e);
     }
   }
 
@@ -773,59 +790,80 @@ public class O2QCache implements OReadCache {
     // used only for statistics, and there is passed merely as stub
     final OModifiableBoolean cacheHit = new OModifiableBoolean();
 
-    // first step, we will create two tree maps to sort data by position in file and load them with maximum speed and
+    // first step, we will create set to sort data by position in file and load them with maximum speed and
     // then to put data into the queue to restore position of entries in LRU list.
+    final TreeSet<PageKey> filePositions = new TreeSet<PageKey>();
 
-    final TreeMap<PageKey, OPair<Long, OCacheEntry>> filePositionMap = new TreeMap<PageKey, OPair<Long, OCacheEntry>>();
-    final TreeMap<Long, OCacheEntry> queuePositionMap = new TreeMap<Long, OCacheEntry>();
+    try {
+      int internalFileId = dataInputStream.readInt();
 
-    long position = 0;
-    int internalFileId = dataInputStream.readInt();
-    while (internalFileId >= 0) {
-      final long pageIndex = dataInputStream.readLong();
-      try {
-        final long fileId = writeCache.externalFileId(internalFileId);
-        final OCacheEntry entry = new OCacheEntry(fileId, pageIndex, null, false);
-        filePositionMap.put(new PageKey(fileId, pageIndex), new OPair<Long, OCacheEntry>(position, entry));
-        queuePositionMap.put(position, entry);
+      while (internalFileId >= 0) {
+        final long pageIndex = dataInputStream.readLong();
+        try {
+          final long fileId = writeCache.externalFileId(internalFileId);
 
-        position++;
-      } finally {
-        internalFileId = dataInputStream.readInt();
-      }
-    }
+          //we replace only pages which are not loaded yet
+          if (get(fileId, pageIndex, true) == null && !pinnedPages.containsKey(new PinnedPage(fileId, pageIndex))) {
+            filePositions.add(new PageKey(fileId, pageIndex));
 
-    // second step: load pages sorted by position in file
-    for (final Map.Entry<PageKey, OPair<Long, OCacheEntry>> entry : filePositionMap.entrySet()) {
-      final PageKey pageKey = entry.getKey();
-      final OPair<Long, OCacheEntry> pair = entry.getValue();
+            //we put placeholder to the queue, later we will replace it with real data
+            //it is done to prevent cases when disk cache size will exceed limits
+            //set by configuration
+            final OCacheEntry cacheEntry = new OCacheEntry(fileId, pageIndex, null, false);
+            queue.putToMRU(cacheEntry);
 
-      final OCachePointer[] pointers = writeCache.load(pageKey.fileId, pageKey.pageIndex, 1, false, cacheHit);
+            Set<Long> pages = filePages.get(fileId);
+            if (pages == null) {
+              pages = new HashSet<Long>();
 
-      if (pointers.length == 0) {
-        queuePositionMap.remove(pair.key);
-        continue;
-      }
+              Set<Long> op = filePages.putIfAbsent(fileId, pages);
+              if (op != null) {
+                pages = op;
+              }
+            }
 
-      final OCacheEntry cacheEntry = pair.value;
-      cacheEntry.setCachePointer(pointers[0]);
-    }
+            pages.add(pageIndex);
 
-    // third step: add pages according to their order in LRU queue
-    for (final OCacheEntry cacheEntry : queuePositionMap.values()) {
-      final long fileId = cacheEntry.getFileId();
-      Set<Long> pages = filePages.get(fileId);
-      if (pages == null) {
-        pages = new HashSet<Long>();
-
-        Set<Long> op = filePages.putIfAbsent(fileId, pages);
-        if (op != null) {
-          pages = op;
+            //remove part of the queue if queue size is bigger than allowed
+            removeColdPagesWithCacheLock();
+          }
+        } finally {
+          internalFileId = dataInputStream.readInt();
         }
       }
+    } catch (IOException e) {
+      for (PageKey pageKey : filePositions) {
+        //clear all place holders
+        queue.remove(pageKey.fileId, pageKey.pageIndex);
 
-      queue.putToMRU(cacheEntry);
-      pages.add(cacheEntry.getPageIndex());
+        final Set<Long> pages = filePages.get(pageKey.fileId);
+        pages.remove(pageKey.pageIndex);
+      }
+
+      throw OException.wrapException(new OLoadCacheStateException("Can not restore state of cache from file"), e);
+    }
+
+    //second step: load pages sorted by position in a file and replace placeholders by real data
+    for (PageKey pageKey : filePositions) {
+      final OCacheEntry cacheEntry = queue.get(pageKey.fileId, pageKey.pageIndex);
+
+      //some queue items may be deleted because it reached size limit
+      if (cacheEntry != null && cacheEntry.getCachePointer() == null) {
+        final OCachePointer[] pointers = writeCache.load(pageKey.fileId, pageKey.pageIndex, 1, false, cacheHit, true);
+
+        if (pointers.length == 0) {
+          queue.remove(pageKey.fileId, pageKey.pageIndex);
+
+          final Set<Long> pages = filePages.get(pageKey.fileId);
+
+          if (pages != null) {
+            pages.remove(pageKey.pageIndex);
+          }
+          continue;
+        }
+
+        cacheEntry.setCachePointer(pointers[0]);
+      }
     }
   }
 
@@ -1080,7 +1118,7 @@ public class O2QCache implements OReadCache {
   }
 
   private UpdateCacheResult updateCache(final long fileId, final long pageIndex, final boolean addNewPages, OWriteCache writeCache,
-      final int pageCount, final OModifiableBoolean cacheHit) throws IOException {
+      final int pageCount, final OModifiableBoolean cacheHit, boolean verifyChecksums) throws IOException {
 
     assert pageCount > 0;
 
@@ -1097,7 +1135,7 @@ public class O2QCache implements OReadCache {
 
     cacheEntry = a1out.remove(fileId, pageIndex);
     if (cacheEntry != null) {
-      dataPointers = writeCache.load(fileId, pageIndex, pageCount, false, cacheHit);
+      dataPointers = writeCache.load(fileId, pageIndex, pageCount, false, cacheHit, verifyChecksums);
 
       OCachePointer dataPointer = dataPointers[0];
       removeColdPages = entryWasInA1OutQueue(fileId, pageIndex, dataPointer, cacheEntry);
@@ -1108,7 +1146,7 @@ public class O2QCache implements OReadCache {
         removeColdPages = entryIsInA1InQueue(fileId, pageIndex);
         cacheHit.setValue(true);
       } else {
-        dataPointers = writeCache.load(fileId, pageIndex, pageCount, addNewPages, cacheHit);
+        dataPointers = writeCache.load(fileId, pageIndex, pageCount, addNewPages, cacheHit, verifyChecksums);
 
         if (dataPointers.length == 0)
           return null;
@@ -1209,8 +1247,12 @@ public class O2QCache implements OReadCache {
           assert !removedFromAInEntry.isDirty();
 
           final OCachePointer cachePointer = removedFromAInEntry.getCachePointer();
-          cachePointer.decrementReadersReferrer();
-          removedFromAInEntry.clearCachePointer();
+          //cache pointer can be null if we load initial state of cache from disk
+          //see #restoreQueueWithPageLoad for details
+          if (cachePointer != null) {
+            cachePointer.decrementReadersReferrer();
+            removedFromAInEntry.clearCachePointer();
+          }
 
           a1out.putToMRU(removedFromAInEntry);
         }
@@ -1235,8 +1277,12 @@ public class O2QCache implements OReadCache {
           assert !removedEntry.isDirty();
 
           final OCachePointer cachePointer = removedEntry.getCachePointer();
-          cachePointer.decrementReadersReferrer();
-          removedEntry.clearCachePointer();
+          //cache pointer can be null if we load initial state of cache from disk
+          //see #restoreQueueWithPageLoad for details
+          if (cachePointer != null) {
+            cachePointer.decrementReadersReferrer();
+            removedEntry.clearCachePointer();
+          }
 
           Set<Long> pageEntries = filePages.get(removedEntry.getFileId());
           pageEntries.remove(removedEntry.getPageIndex());
@@ -1261,8 +1307,8 @@ public class O2QCache implements OReadCache {
         } else {
           fileLock = fileLockManager.acquireSharedLock(removedFromAInEntry.getFileId());
           try {
-            pageLock = pageLockManager
-                .acquireExclusiveLock(new PageKey(removedFromAInEntry.getFileId(), removedFromAInEntry.getPageIndex()));
+            final PageKey k = new PageKey(removedFromAInEntry.getFileId(), removedFromAInEntry.getPageIndex());
+            pageLockManager.acquireExclusiveLock(k);
             try {
               if (a1in.get(removedFromAInEntry.getFileId(), removedFromAInEntry.getPageIndex()) == null)
                 continue;
@@ -1283,10 +1329,10 @@ public class O2QCache implements OReadCache {
 
               a1out.putToMRU(removedFromAInEntry);
             } finally {
-              pageLockManager.releaseLock(pageLock);
+              pageLockManager.releaseExclusiveLock(k);
             }
           } finally {
-            fileLockManager.releaseLock(fileLock);
+            fileLockManager.releaseSharedLock(removedFromAInEntry.getFileId());
           }
         }
 
@@ -1294,7 +1340,8 @@ public class O2QCache implements OReadCache {
           OCacheEntry removedEntry = a1out.getLRU();
           fileLock = fileLockManager.acquireSharedLock(removedEntry.getFileId());
           try {
-            pageLock = pageLockManager.acquireExclusiveLock(new PageKey(removedEntry.getFileId(), removedEntry.getPageIndex()));
+            final PageKey k = new PageKey(removedEntry.getFileId(), removedEntry.getPageIndex());
+            pageLock = pageLockManager.acquireExclusiveLock(k);
             try {
               if (a1out.remove(removedEntry.getFileId(), removedEntry.getPageIndex()) == null)
                 continue;
@@ -1306,10 +1353,10 @@ public class O2QCache implements OReadCache {
               Set<Long> pageEntries = filePages.get(removedEntry.getFileId());
               pageEntries.remove(removedEntry.getPageIndex());
             } finally {
-              pageLockManager.releaseLock(pageLock);
+              pageLockManager.releaseExclusiveLock(k);
             }
           } finally {
-            fileLockManager.releaseLock(fileLock);
+            fileLockManager.releaseSharedLock(removedEntry.getFileId());
           }
         }
       } else {
@@ -1320,7 +1367,8 @@ public class O2QCache implements OReadCache {
         } else {
           fileLock = fileLockManager.acquireSharedLock(removedEntry.getFileId());
           try {
-            pageLock = pageLockManager.acquireExclusiveLock(new PageKey(removedEntry.getFileId(), removedEntry.getPageIndex()));
+            final PageKey k = new PageKey(removedEntry.getFileId(), removedEntry.getPageIndex());
+            pageLock = pageLockManager.acquireExclusiveLock(k);
             try {
               if (am.get(removedEntry.getFileId(), removedEntry.getPageIndex()) == null)
                 continue;
@@ -1339,10 +1387,10 @@ public class O2QCache implements OReadCache {
               Set<Long> pageEntries = filePages.get(removedEntry.getFileId());
               pageEntries.remove(removedEntry.getPageIndex());
             } finally {
-              pageLockManager.releaseLock(pageLock);
+              pageLockManager.releaseExclusiveLock(k);
             }
           } finally {
-            fileLockManager.releaseLock(fileLock);
+            fileLockManager.releaseSharedLock(removedEntry.getFileId());
           }
         }
       }

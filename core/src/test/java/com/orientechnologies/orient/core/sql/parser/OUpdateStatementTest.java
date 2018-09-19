@@ -50,7 +50,7 @@ public class OUpdateStatementTest {
     checkRightSyntax("update  Foo set a = 'b'");
     checkRightSyntax("update  Foo set a = 1");
     checkRightSyntax("update  Foo set a = 1+1");
-    checkRightSyntax("update  Foo set a = a.b.toLowerCase()");
+    checkRightSyntax("update  Foo set a = a.b.toLowerCase(Locale.ENGLISH)");
 
     checkRightSyntax("update  Foo set a = b, b=c");
     checkRightSyntax("update  Foo set a = 'b', b=1");
@@ -124,6 +124,20 @@ public class OUpdateStatementTest {
   public void testReturnCount() {
     checkRightSyntax("update foo set bar = 1 RETURN COUNT");
     checkRightSyntax("update foo set bar = 1 return count");
+  }
+
+  @Test
+  public void testRemove() {
+    checkRightSyntax("update foo remove a");
+    checkRightSyntax("update foo remove a = 12");
+    checkRightSyntax("update foo remove a.b.c = a.b.c[0]");
+
+  }
+
+  @Test
+  public void testLet() {
+    checkRightSyntax("update foo set a = $a let $a = 2");
+    checkRightSyntax("update foo set a = $a let $a = 2 where foo = 12");
   }
 
   private void printTree(String s) {

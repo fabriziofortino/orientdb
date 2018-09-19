@@ -31,6 +31,7 @@ import com.orientechnologies.orient.core.metadata.security.OToken;
 import com.orientechnologies.orient.core.storage.OStorage;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -83,7 +84,7 @@ public class OPartitionedDatabasePool extends OOrientListenerAbstract {
   private final String password;
   private final int    maxPartitonSize;
   private final AtomicBoolean poolBusy      = new AtomicBoolean();
-  private final int           maxPartitions = Runtime.getRuntime().availableProcessors() << 3;
+  private int           maxPartitions = Runtime.getRuntime().availableProcessors() ;
   private final Semaphore connectionsCounter;
   private volatile ThreadLocal<PoolData> poolData = new ThreadPoolData();
   private volatile PoolPartition[] partitions;
@@ -91,21 +92,23 @@ public class OPartitionedDatabasePool extends OOrientListenerAbstract {
   private          boolean autoCreate = false;
 
   public OPartitionedDatabasePool(String url, String userName, String password) {
-    this(url, userName, password, Runtime.getRuntime().availableProcessors() << 1, Runtime.getRuntime().availableProcessors());
+    this(url, userName, password, Runtime.getRuntime().availableProcessors(), -1);
   }
 
   public OPartitionedDatabasePool(String url, String userName, String password, int maxPartitionSize, int maxPoolSize) {
     this.url = url;
     this.userName = userName;
     this.password = password;
-    this.maxPartitonSize = maxPartitionSize;
     if (maxPoolSize > 0) {
       connectionsCounter = new Semaphore(maxPoolSize);
+      this.maxPartitions = 1;
+      this.maxPartitonSize = maxPoolSize;
     } else {
+      this.maxPartitonSize = maxPartitionSize;
       connectionsCounter = null;
     }
 
-    final PoolPartition[] pts = new PoolPartition[2];
+    final PoolPartition[] pts = new PoolPartition[maxPartitions];
 
     for (int i = 0; i < pts.length; i++) {
       final PoolPartition partition = new PoolPartition();
@@ -258,12 +261,14 @@ public class OPartitionedDatabasePool extends OOrientListenerAbstract {
               return newDb;
             }
           } else {
+
+            for (Map.Entry<String, Object> entry : properties.entrySet()) {
+              db.setProperty(entry.getKey(), entry.getValue());
+            }
+
             openDatabase(db);
             db.partition = partition;
 
-            for (Map.Entry<String, Object> entry : properties.entrySet()) {
-             db.setProperty(entry.getKey(), entry.getValue());
-            }
             partition.acquiredConnections.incrementAndGet();
 
             data.acquireCount = 1;
@@ -375,9 +380,9 @@ public class OPartitionedDatabasePool extends OOrientListenerAbstract {
    */
   public Object setProperty(final String iName, final Object iValue) {
     if (iValue != null) {
-      return properties.put(iName.toLowerCase(), iValue);
+      return properties.put(iName.toLowerCase(Locale.ENGLISH), iValue);
     } else {
-      return properties.remove(iName.toLowerCase());
+      return properties.remove(iName.toLowerCase(Locale.ENGLISH));
     }
   }
 
@@ -388,7 +393,7 @@ public class OPartitionedDatabasePool extends OOrientListenerAbstract {
    * @return The previous value if any, otherwise null
    */
   public Object getProperty(final String iName) {
-    return properties.get(iName.toLowerCase());
+    return properties.get(iName.toLowerCase(Locale.ENGLISH));
   }
 
   private static final class PoolData {

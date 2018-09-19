@@ -71,9 +71,9 @@ public class LocalPaginatedStorageLinkBagCrashRestoreIT {
     System.setProperty("ORIENTDB_HOME", buildDirectory);
 
     ProcessBuilder processBuilder = new ProcessBuilder(javaExec, "-XX:MaxDirectMemorySize=512g", "-classpath",
-        System.getProperty("java.class.path"),  "-DmutexFile=" + mutexFile.getCanonicalPath(),
-        "-DORIENTDB_HOME=" + buildDirectory, RemoteDBRunner.class.getName());
-    processBuilder.inheritIO();
+        System.getProperty("java.class.path"), "-DmutexFile=" + mutexFile.getCanonicalPath(), "-DORIENTDB_HOME=" + buildDirectory,
+        RemoteDBRunner.class.getName());
+    CrashRestoreUtils.inheritIO(processBuilder);
 
     process = processBuilder.start();
 
@@ -126,7 +126,7 @@ public class LocalPaginatedStorageLinkBagCrashRestoreIT {
     test_db.close();
 
     System.out.println("Wait for process to destroy");
-    process.destroy();
+    CrashRestoreUtils.destroyForcibly(process);
 
     process.waitFor();
     System.out.println("Process was destroyed");
@@ -179,7 +179,7 @@ public class LocalPaginatedStorageLinkBagCrashRestoreIT {
       final ORecordId rid = new ORecordId(defaultClusterId);
 
       for (OPhysicalPosition physicalPosition : physicalPositions) {
-        rid.clusterPosition = physicalPosition.clusterPosition;
+        rid.setClusterPosition(physicalPosition.clusterPosition);
 
         ODatabaseRecordThreadLocal.INSTANCE.set(base_db);
         ODocument baseDocument = base_db.load(rid);

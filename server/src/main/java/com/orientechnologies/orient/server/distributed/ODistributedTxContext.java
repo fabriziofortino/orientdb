@@ -27,7 +27,7 @@ import java.util.List;
 
 /**
  * Represent a distributed transaction context.
- * 
+ *
  * @author Luca Garulli
  */
 public interface ODistributedTxContext {
@@ -47,5 +47,13 @@ public interface ODistributedTxContext {
 
   void destroy();
 
+  void clearUndo();
+
   void unlock();
+
+  long getStartedOn();
+
+  void cancel(ODistributedServerManager current, ODatabaseDocumentInternal database);
+
+  boolean isCanceled();
 }

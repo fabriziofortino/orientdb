@@ -26,14 +26,16 @@ import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.record.impl.ODocument;
+import com.orientechnologies.orient.core.util.ODateHelper;
 import com.orientechnologies.orient.server.distributed.ODistributedConfiguration;
 import com.orientechnologies.orient.server.distributed.ODistributedServerManager;
-import com.orientechnologies.orient.server.hazelcast.OHazelcastPlugin;
 
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Formats information about distributed cfg.
@@ -56,7 +58,15 @@ public class ODistributedOutput {
 
         final String serverName = m.field("name");
 
-        serverRow.field("Name", serverName + (manager.getLocalNodeName().equals(serverName) ? "*" : ""));
+        String serverLabel = serverName;
+        if (manager.getLocalNodeName().equals(serverName))
+          serverLabel += "(*)";
+
+        final String lockManagerServer = manager.getLockManagerServer();
+        if (lockManagerServer != null && lockManagerServer.equals(serverName))
+          serverLabel += "(@)";
+
+        serverRow.field("Name", serverLabel);
         serverRow.field("Status", m.field("status"));
         serverRow.field("Databases", (String) null);
         serverRow.field("Conns", m.field("connections"));
@@ -89,8 +99,9 @@ public class ODistributedOutput {
         if (usedMem != null) {
           final long maxMem = m.field("maxMemory");
 
-          serverRow.field("UsedMemory", String.format("%s/%s (%.2f%%)", OFileUtils.getSizeAsString(usedMem),
-              OFileUtils.getSizeAsString(maxMem), ((float) usedMem / (float) maxMem) * 100));
+          serverRow.field("UsedMemory", String
+              .format("%s/%s (%.2f%%)", OFileUtils.getSizeAsString(usedMem), OFileUtils.getSizeAsString(maxMem),
+                  ((float) usedMem / (float) maxMem) * 100));
         }
         rows.add(serverRow);
 
@@ -134,7 +145,7 @@ public class ODistributedOutput {
     return buffer.toString();
   }
 
-  public static String formatLatency(final OHazelcastPlugin manager, final ODocument distribCfg) {
+  public static String formatLatency(final ODistributedAbstractPlugin manager, final ODocument distribCfg) {
     final List<OIdentifiable> rows = new ArrayList<OIdentifiable>();
 
     final List<ODocument> members = distribCfg.field("members");
@@ -166,7 +177,7 @@ public class ODistributedOutput {
         // SEARCH FOR THE MEMBER
         ODocument fromMember = null;
         for (ODocument m : members) {
-          if (fromServer.equals(m.field("name"))) {
+          if (m != null && fromServer.equals(m.field("name"))) {
             fromMember = m;
             break;
           }
@@ -203,11 +214,11 @@ public class ODistributedOutput {
     return buffer.toString();
   }
 
-  public static String formatMessages(final OHazelcastPlugin manager, final ODocument distribCfg) {
+  public static String formatMessages(final ODistributedAbstractPlugin manager, final ODocument distribCfg) {
     return formatMessageBetweenServers(manager, distribCfg) + formatMessageStats(manager, distribCfg);
   }
 
-  public static String formatMessageBetweenServers(final OHazelcastPlugin manager, final ODocument distribCfg) {
+  public static String formatMessageBetweenServers(final ODistributedAbstractPlugin manager, final ODocument distribCfg) {
     final List<OIdentifiable> rows = new ArrayList<OIdentifiable>();
 
     final List<ODocument> members = distribCfg.field("members");
@@ -290,9 +301,9 @@ public class ODistributedOutput {
       rowTotals.field("Servers", "TOTAL");
       for (String fromServer : orderedServers) {
         fromServer = formatServerName(manager, fromServer);
-        rowTotals.field(fromServer, String.format("%,d", rowTotals.field(fromServer)));
+        rowTotals.field(fromServer, String.format("%,d", (Number) rowTotals.field(fromServer)));
       }
-      rowTotals.field("TOTAL", String.format("%,d", rowTotals.field("TOTAL")));
+      rowTotals.field("TOTAL", String.format("%,d", (Number) rowTotals.field("TOTAL")));
 
       table.setColumnAlignment("TOTAL", OTableFormatter.ALIGNMENT.RIGHT);
     }
@@ -302,13 +313,13 @@ public class ODistributedOutput {
     return buffer.toString();
   }
 
-  public static String formatMessageStats(final OHazelcastPlugin manager, final ODocument distribCfg) {
+  public static String formatMessageStats(final ODistributedAbstractPlugin manager, final ODocument distribCfg) {
     final List<OIdentifiable> rows = new ArrayList<OIdentifiable>();
 
     final List<ODocument> members = distribCfg.field("members");
 
     final StringBuilder buffer = new StringBuilder();
-    buffer.append("\nREPLICATION MESSAGE COORDINATOR STATS");
+    buffer.append("\nREPLICATION MESSAGE CURRENT NODE STATS");
     final OTableFormatter table = new OTableFormatter(new OTableFormatter.OTableOutput() {
       @Override
       public void onMessage(final String text, final Object... args) {
@@ -390,9 +401,9 @@ public class ODistributedOutput {
 
       rowTotals.field("Servers", "TOTAL");
       for (String opName : operations) {
-        rowTotals.field(opName, String.format("%,d", rowTotals.field(opName)));
+        rowTotals.field(opName, String.format("%,d", (Number) rowTotals.field(opName)));
       }
-      rowTotals.field("TOTAL", String.format("%,d", rowTotals.field("TOTAL")));
+      rowTotals.field("TOTAL", String.format("%,d", (Number) rowTotals.field("TOTAL")));
     }
 
     table.setColumnAlignment("TOTAL", OTableFormatter.ALIGNMENT.RIGHT);
@@ -415,6 +426,7 @@ public class ODistributedOutput {
    *
    * @param manager
    * @param distribCfg
+   *
    * @return
    */
   public static String getCompactServerStatus(final ODistributedServerManager manager, final ODocument distribCfg) {
@@ -468,7 +480,7 @@ public class ODistributedOutput {
   }
 
   public static String formatClusterTable(final ODistributedServerManager manager, final String databaseName,
-      final ODistributedConfiguration cfg, final int availableNodes) {
+      final ODistributedConfiguration cfg, final int totalConfiguredServers) {
     final StringBuilder buffer = new StringBuilder();
 
     if (cfg.hasDataCenterConfiguration()) {
@@ -500,7 +512,8 @@ public class ODistributedOutput {
       table.writeRecords(rows, -1);
     }
 
-    buffer.append("\n\nCLUSTER CONFIGURATION (LEGEND: X = Owner, o = Copy)");
+    buffer.append(
+        "\n\nCLUSTER CONFIGURATION [wQuorum: " + manager.isWriteQuorumPresent(databaseName) + "] (LEGEND: X = Owner, o = Copy)");
 
     final OTableFormatter table = new OTableFormatter(new OTableFormatter.OTableOutput() {
 
@@ -524,24 +537,26 @@ public class ODistributedOutput {
     final String localNodeName = manager.getLocalNodeName();
 
     // READ DEFAULT CFG (CLUSTER=*)
-    final String defaultWQ = cfg.isLocalDataCenterWriteQuorum() ? ODistributedConfiguration.QUORUM_LOCAL_DC
-        : "" + cfg.getWriteQuorum(ODistributedConfiguration.ALL_WILDCARD, availableNodes, localNodeName);
-    final int defaultRQ = cfg.getReadQuorum(ODistributedConfiguration.ALL_WILDCARD, availableNodes, localNodeName);
+    final String defaultWQ = cfg.isLocalDataCenterWriteQuorum() ?
+        ODistributedConfiguration.QUORUM_LOCAL_DC :
+        "" + cfg.getWriteQuorum(ODistributedConfiguration.ALL_WILDCARD, totalConfiguredServers, localNodeName);
+    final int defaultRQ = cfg.getReadQuorum(ODistributedConfiguration.ALL_WILDCARD, totalConfiguredServers, localNodeName);
     final String defaultOwner = "" + cfg.getClusterOwner(ODistributedConfiguration.ALL_WILDCARD);
-    final List<String> defaultServers = cfg.getServers(ODistributedConfiguration.ALL_WILDCARD);
+    final List<String> defaultServers = cfg.getConfiguredServers(ODistributedConfiguration.ALL_WILDCARD);
 
     final List<OIdentifiable> rows = new ArrayList<OIdentifiable>();
     final Set<String> allServers = new HashSet<String>();
 
     for (String cluster : cfg.getClusterNames()) {
-      final String wQ = cfg.isLocalDataCenterWriteQuorum() ? ODistributedConfiguration.QUORUM_LOCAL_DC
-          : "" + cfg.getWriteQuorum(cluster, availableNodes, localNodeName);
-      final int rQ = cfg.getReadQuorum(cluster, availableNodes, localNodeName);
+      final String wQ = cfg.isLocalDataCenterWriteQuorum() ?
+          ODistributedConfiguration.QUORUM_LOCAL_DC :
+          "" + cfg.getWriteQuorum(cluster, totalConfiguredServers, localNodeName);
+      final int rQ = cfg.getReadQuorum(cluster, totalConfiguredServers, localNodeName);
       final String owner = cfg.getClusterOwner(cluster);
-      final List<String> servers = cfg.getServers(cluster);
+      final List<String> servers = cfg.getConfiguredServers(cluster);
 
-      if (!cluster.equals(ODistributedConfiguration.ALL_WILDCARD) && defaultWQ.equals(wQ) && defaultRQ == rQ
-          && defaultOwner.equals(owner) && defaultServers.size() == servers.size() && defaultServers.containsAll(servers))
+      if (!cluster.equals(ODistributedConfiguration.ALL_WILDCARD) && defaultWQ.equals(wQ) && defaultRQ == rQ && defaultOwner
+          .equals(owner) && defaultServers.size() == servers.size() && defaultServers.containsAll(servers))
         // SAME CFG AS THE DEFAULT: DON'T DISPLAY IT
         continue;
 
@@ -568,7 +583,10 @@ public class ODistributedOutput {
         }
     }
 
+    final Set<String> registeredServers = cfg.getRegisteredServers();
+
     for (String server : allServers) {
+      table.setColumnMetadata(server, "CFG", registeredServers.contains(server) ? "static" : "dynamic");
       table.setColumnMetadata(server, "ROLE", cfg.getServerRole(server).toString());
       table.setColumnMetadata(server, "STATUS", manager.getDatabaseStatus(server, databaseName).toString());
       if (cfg.hasDataCenterConfiguration())
@@ -624,7 +642,53 @@ public class ODistributedOutput {
     return buffer.toString();
   }
 
-  protected static String formatServerName(final OHazelcastPlugin manager, final String fromServer) {
+  protected static String formatServerName(final ODistributedAbstractPlugin manager, final String fromServer) {
     return fromServer + (manager.getLocalNodeName().equals(fromServer) ? "*" : "");
+  }
+
+  public static Object formatRecordLocks(final ODistributedAbstractPlugin manager, final String db) {
+    final ConcurrentHashMap<ORID, ODistributedDatabaseImpl.ODistributedLock> lockManager = manager.getMessageService()
+        .getDatabase(db).lockManager;
+
+    final StringBuilder buffer = new StringBuilder();
+    buffer.append("HA RECORD LOCKS FOR DATABASE '" + db + "'");
+    final OTableFormatter table = new OTableFormatter(new OTableFormatter.OTableOutput() {
+      @Override
+      public void onMessage(final String text, final Object... args) {
+        buffer.append(String.format(text, args));
+      }
+    });
+    table.setColumnHidden("#");
+
+    final List<OIdentifiable> rows = new ArrayList<OIdentifiable>();
+
+    if (lockManager != null) {
+      // BUILD A SORTED RID LIST
+      final List<ORID> orderedRIDs = new ArrayList<ORID>(lockManager.size());
+      for (ORID rid : lockManager.keySet())
+        orderedRIDs.add(rid);
+      Collections.sort(orderedRIDs);
+
+      SimpleDateFormat dateFormat = new SimpleDateFormat(ODateHelper.DEF_DATETIME_FORMAT);
+
+      for (ORID rid : orderedRIDs) {
+        final ODistributedDatabaseImpl.ODistributedLock lock = lockManager.get(rid);
+        if (lock == null)
+          continue;
+
+        final ODocument row = new ODocument();
+        rows.add(row);
+
+        row.field("rid", rid);
+        row.field("server", manager.getNodeNameById(lock.reqId.getNodeId()));
+        row.field("acquiredOn", dateFormat.format(new Date(lock.acquiredOn)));
+        row.field("reqId", lock.reqId);
+        row.field("threadCount", lock.lock.getCount());
+      }
+    }
+
+    table.writeRecords(rows, -1);
+    buffer.append("\n");
+    return buffer.toString();
   }
 }
